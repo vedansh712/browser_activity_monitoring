@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Track Daily - Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="options-container">
+    <h1 class="logo">Track Daily Settings</h1>
+
+    <!-- General Settings -->
+    <section class="section">
+      <h2>General</h2>
+      <div class="setting-row">
+        <div class="setting-info">
+          <label>Tracking Enabled</label>
+          <p>Enable or disable all browsing tracking</p>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="tracking-enabled" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <label>Idle Threshold (seconds)</label>
+          <p>How long before you're considered idle</p>
+        </div>
+        <input type="number" id="idle-threshold" min="30" max="600" value="120" class="input-number">
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <label>Data Retention (days)</label>
+          <p>Auto-delete browsing data older than this</p>
+        </div>
+        <input type="number" id="retention-days" min="7" max="365" value="90" class="input-number">
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <label>YouTube Deep Tracking</label>
+          <p>Extract video title, channel, and category from YouTube</p>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="youtube-tracking" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+    </section>
+
+    <!-- Excluded Domains -->
+    <section class="section">
+      <h2>Excluded Domains</h2>
+      <p class="section-desc">Domains listed here will not be tracked.</p>
+      <div class="excluded-list" id="excluded-list"></div>
+      <div class="add-row">
+        <input type="text" id="new-excluded" placeholder="e.g. example.com" class="input-text">
+        <button class="btn btn-primary" id="add-excluded">Add</button>
+      </div>
+    </section>
+
+    <!-- AI Classification -->
+    <section class="section">
+      <h2>AI Classification</h2>
+      <p class="section-desc">Optional: provide an API key to auto-classify unknown websites.</p>
+      <div class="setting-row">
+        <div class="setting-info">
+          <label>AI Provider</label>
+        </div>
+        <select id="ai-provider" class="input-select">
+          <option value="">None (use built-in AI if available)</option>
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic</option>
+          <option value="gemini">Google Gemini</option>
+        </select>
+      </div>
+      <div class="setting-row" id="api-key-row" style="display:none;">
+        <div class="setting-info">
+          <label>API Key</label>
+        </div>
+        <input type="password" id="ai-api-key" placeholder="Enter API key" class="input-text">
+      </div>
+      <div class="ai-status" id="ai-status"></div>
+    </section>
+
+    <!-- Custom Categories -->
+    <section class="section">
+      <h2>Custom Categories</h2>
+      <div class="custom-categories" id="custom-categories"></div>
+      <div class="add-category-form" id="add-category-form">
+        <input type="text" id="new-cat-name" placeholder="Category name" class="input-text">
+        <input type="color" id="new-cat-color" value="#667eea" class="input-color">
+        <input type="text" id="new-cat-domain" placeholder="Domain rule (e.g. example.com)" class="input-text">
+        <button class="btn btn-primary" id="add-category">Add Category</button>
+      </div>
+    </section>
+
+    <!-- Domain Overrides -->
+    <section class="section">
+      <h2>Domain Overrides</h2>
+      <p class="section-desc">Manually assigned domain categories.</p>
+      <div class="overrides-list" id="overrides-list"></div>
+    </section>
+
+    <!-- Danger Zone -->
+    <section class="section danger-zone">
+      <h2>Danger Zone</h2>
+      <p class="section-desc">Irreversible actions. Be careful.</p>
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <label>Clear Browsing History</label>
+          <p>Delete all tracked sessions and analytics. Keeps your settings and custom categories.</p>
+        </div>
+        <button class="btn btn-danger" id="clear-history">Clear History</button>
+      </div>
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <label>Reset Everything</label>
+          <p>Delete ALL data: sessions, settings, custom categories, domain overrides. Resets to defaults.</p>
+        </div>
+        <button class="btn btn-danger" id="clear-all">Reset All</button>
+      </div>
+    </section>
+
+    <!-- Confirmation Modal -->
+    <div class="modal-backdrop" id="confirm-modal" style="display: none;">
+      <div class="modal">
+        <h3 id="confirm-title">Are you sure?</h3>
+        <p id="confirm-message"></p>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="confirm-cancel">Cancel</button>
+          <button class="btn btn-danger" id="confirm-ok">Yes, delete</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="save-bar">
+      <span class="save-status" id="save-status"></span>
+      <button class="btn btn-primary" id="save-settings">Save Settings</button>
+    </div>
+  </div>
+
+  <script src="options.js" type="module"></script>
+</body>
+</html>

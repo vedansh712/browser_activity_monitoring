@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Track Daily - Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar -->
+    <nav class="sidebar">
+      <div class="sidebar-header">
+        <h1 class="logo">Track Daily</h1>
+      </div>
+      <ul class="nav-links">
+        <li class="nav-item active" data-view="overview">
+          <span class="nav-icon">&#9632;</span> Overview
+        </li>
+        <li class="nav-item" data-view="domains">
+          <span class="nav-icon">&#9775;</span> Domains
+        </li>
+        <li class="nav-item" data-view="youtube">
+          <span class="nav-icon">&#9654;</span> YouTube
+        </li>
+        <li class="nav-item" data-view="categories">
+          <span class="nav-icon">&#9881;</span> Categories
+        </li>
+      </ul>
+      <div class="sidebar-footer">
+        <button class="btn-settings" id="btn-settings">Settings</button>
+        <button class="btn-export" id="btn-export">Export Data</button>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Top Bar -->
+      <div class="top-bar">
+        <div class="date-controls">
+          <button class="date-btn" id="prev-period">&larr;</button>
+          <span class="date-label" id="date-label">Today</span>
+          <button class="date-btn" id="next-period">&rarr;</button>
+        </div>
+        <div class="view-tabs">
+          <button class="view-tab active" data-range="daily">Daily</button>
+          <button class="view-tab" data-range="weekly">Weekly</button>
+          <button class="view-tab" data-range="monthly">Monthly</button>
+        </div>
+      </div>
+
+      <!-- Overview View -->
+      <div class="view active" id="view-overview">
+        <!-- Summary Cards -->
+        <div class="summary-cards">
+          <div class="card summary-card">
+            <div class="card-label">Total Time</div>
+            <div class="card-value" id="summary-total">0h 0m</div>
+          </div>
+          <div class="card summary-card">
+            <div class="card-label">Sessions</div>
+            <div class="card-value" id="summary-sessions">0</div>
+          </div>
+          <div class="card summary-card">
+            <div class="card-label">Top Category</div>
+            <div class="card-value" id="summary-top-cat">-</div>
+          </div>
+          <div class="card summary-card">
+            <div class="card-label">Top Domain</div>
+            <div class="card-value" id="summary-top-domain">-</div>
+          </div>
+        </div>
+
+        <!-- Charts Row -->
+        <div class="charts-row">
+          <div class="card chart-card wide">
+            <h3>Time Trend</h3>
+            <canvas id="time-trend-chart"></canvas>
+          </div>
+          <div class="card chart-card">
+            <h3>Categories</h3>
+            <canvas id="category-doughnut"></canvas>
+          </div>
+        </div>
+
+        <!-- Hourly Heatmap -->
+        <div class="card">
+          <h3>Activity by Hour</h3>
+          <div class="heatmap" id="hourly-heatmap"></div>
+        </div>
+      </div>
+
+      <!-- Domains View -->
+      <div class="view" id="view-domains">
+        <div class="card">
+          <div class="table-controls">
+            <h3>All Domains</h3>
+            <select id="domain-category-filter">
+              <option value="all">All Categories</option>
+            </select>
+          </div>
+          <table class="data-table" id="domains-table">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th class="sortable" data-sort="domain">Domain</th>
+                <th class="sortable active" data-sort="time">Time</th>
+                <th class="sortable" data-sort="sessions">Sessions</th>
+                <th>Category</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="domains-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- YouTube View -->
+      <div class="view" id="view-youtube">
+        <div class="summary-cards">
+          <div class="card summary-card">
+            <div class="card-label">Watch Time</div>
+            <div class="card-value" id="yt-watch-time">0h 0m</div>
+          </div>
+          <div class="card summary-card">
+            <div class="card-label">Videos Watched</div>
+            <div class="card-value" id="yt-video-count">0</div>
+          </div>
+        </div>
+        <div class="charts-row">
+          <div class="card chart-card">
+            <h3>Top Channels</h3>
+            <canvas id="yt-channels-chart"></canvas>
+          </div>
+          <div class="card chart-card">
+            <h3>Content Categories</h3>
+            <canvas id="yt-categories-chart"></canvas>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Videos Watched</h3>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Channel</th>
+                <th>Duration</th>
+                <th>Watch Time</th>
+                <th>Category</th>
+              </tr>
+            </thead>
+            <tbody id="yt-videos-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Categories View -->
+      <div class="view" id="view-categories">
+        <div class="card">
+          <h3>Category Breakdown</h3>
+          <div class="category-list" id="category-breakdown"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="../lib/chart.umd.min.js"></script>
+  <script src="dashboard.js" type="module"></script>
+</body>
+</html>

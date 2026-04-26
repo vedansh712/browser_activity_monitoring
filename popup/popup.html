@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Track Daily</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <div class="header">
+      <h1 class="logo">Track Daily</h1>
+      <label class="toggle-switch">
+        <input type="checkbox" id="tracking-toggle" checked>
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <!-- Current Session -->
+    <div class="current-session" id="current-session">
+      <div class="session-status">
+        <span class="pulse-dot"></span>
+        <span id="current-domain">Not tracking</span>
+      </div>
+      <span class="session-time" id="current-time">00:00:00</span>
+    </div>
+
+    <!-- Today's Total -->
+    <div class="today-total">
+      <div class="total-label">Today</div>
+      <div class="total-time" id="total-time">0h 0m</div>
+    </div>
+
+    <!-- Category Breakdown (mini chart) -->
+    <div class="chart-section">
+      <canvas id="category-chart" width="200" height="200"></canvas>
+    </div>
+
+    <!-- Top Domains -->
+    <div class="top-domains">
+      <h3>Top Sites</h3>
+      <ul id="domain-list">
+        <li class="empty-state">No data yet</li>
+      </ul>
+    </div>
+
+    <!-- Uncategorized Notice -->
+    <div class="uncategorized-notice" id="uncategorized-notice" style="display: none;">
+      <div class="notice-header">
+        <span class="notice-icon">?</span>
+        <span>Categorize <strong id="uncat-domain"></strong></span>
+      </div>
+      <div class="category-buttons" id="category-buttons"></div>
+    </div>
+
+    <!-- Footer Actions -->
+    <div class="footer">
+      <button class="btn btn-primary" id="open-dashboard">Open Dashboard</button>
+      <button class="btn btn-secondary" id="open-options">Settings</button>
+    </div>
+  </div>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

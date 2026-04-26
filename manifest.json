@@ -1,0 +1,60 @@
+{
+  "manifest_version": 3,
+  "name": "Track Daily",
+  "version": "1.0.0",
+  "description": "Track and analyze your browsing habits with detailed time tracking, automatic categorization, and YouTube deep analytics.",
+
+  "permissions": [
+    "tabs",
+    "idle",
+    "storage",
+    "alarms",
+    "webNavigation",
+    "unlimitedStorage"
+  ],
+
+  "host_permissions": [
+    "*://*.youtube.com/*"
+  ],
+
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["*://*.youtube.com/watch*", "*://*.youtube.com/shorts/*"],
+      "js": ["content-scripts/youtube-injected.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["*://*.youtube.com/watch*", "*://*.youtube.com/shorts/*"],
+      "js": ["content-scripts/youtube.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content-scripts/generic.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+
+  "options_page": "options/options.html",
+
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}
