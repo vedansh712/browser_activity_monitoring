@@ -1,225 +1,366 @@
-import { STORAGE_KEYS, DEFAULT_CATEGORIES, DEFAULT_SETTINGS, MSG } from '../shared/constants.js';
+import {
+  DEFAULT_SETTINGS,
+  SETTINGS_LIMITS,
+  LOG_LEVELS,
+  MSG,
+} from '../shared/constants.js';
+import { AI_STATUS } from '../shared/constants.js';
+import { clampInt } from '../shared/utils.js';
+import { html, render, cssColor } from '../shared/html.js';
+import { createCategoryRegistry } from '../shared/category-registry.js';
+import { createLogger } from '../shared/logger.js';
+import * as storage from '../background/storage-manager.js';
+import { aiClassifier } from '../background/container.js';
 
+const log = createLogger('options');
+
+/*
+ * Options page.
+ *
+ * Two rules govern this module, both of them consequences of bugs that were
+ * present before:
+ *
+ *  1. Destructive actions persist immediately. Previously, removing an excluded
+ *     domain or a category only mutated an in-memory copy, so the change looked
+ *     applied but silently reverted unless the user also pressed Save.
+ *
+ *  2. The Save button writes settings ONLY. Previously it wrote the entire
+ *     categories blob from a snapshot taken at page load, so pressing Save
+ *     discarded any categorization the service worker had performed while the
+ *     page was open — and, after Reset Everything, restored the data the user
+ *     had just deleted.
+ *
+ * All markup is built with the html`` tag, which escapes interpolated values.
+ */
+
+/** @type {Object} */
 let settings = { ...DEFAULT_SETTINGS };
-let categories = { builtIn: DEFAULT_CATEGORIES, custom: [], domainOverrides: {}, channelOverrides: {} };
+/** @type {Object} */
+let categories = { custom: [], domainOverrides: {}, channelOverrides: {} };
+/** Lookup over built-ins plus custom categories; rebuilt whenever state loads. */
+let registry = createCategoryRegistry(categories);
 
 // ─── Init ──────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
-  await loadSettings();
-  await loadCategories();
-  renderAll();
-  setupEventListeners();
-  checkAIStatus();
+  try {
+    await loadState();
+    renderAll();
+    setupEventListeners();
+    await checkAIStatus();
+  } catch (err) {
+    log.error('Failed to initialise options page:', err);
+    showStatus('Could not load settings. See the console for details.', 'error');
+  }
 });
 
-// ─── Load ──────────────────────────────────────────────────────────
-
-async function loadSettings() {
-  const result = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS);
-  settings = { ...DEFAULT_SETTINGS, ...(result[STORAGE_KEYS.SETTINGS] || {}) };
-}
-
-async function loadCategories() {
-  const result = await chrome.storage.local.get(STORAGE_KEYS.CATEGORIES);
-  if (result[STORAGE_KEYS.CATEGORIES]) {
-    categories = result[STORAGE_KEYS.CATEGORIES];
-  }
+/**
+ * Re-read all persisted state. Called on load and after any destructive action,
+ * so the in-memory copy can never be used to resurrect deleted data.
+ */
+async function loadState() {
+  [settings, categories] = await Promise.all([
+    storage.getSettings(),
+    storage.getCategories(),
+  ]);
+  registry = createCategoryRegistry(categories);
 }
 
 // ─── Render ────────────────────────────────────────────────────────
 
 function renderAll() {
-  // General settings
   document.getElementById('tracking-enabled').checked = settings.trackingEnabled;
   document.getElementById('idle-threshold').value = settings.idleThresholdSeconds;
   document.getElementById('retention-days').value = settings.retentionDays;
   document.getElementById('youtube-tracking').checked = settings.youtubeDeepTracking;
 
-  // AI settings
-  document.getElementById('ai-provider').value = settings.aiProvider || '';
-  document.getElementById('ai-api-key').value = settings.aiApiKey || '';
-  document.getElementById('api-key-row').style.display = settings.aiProvider ? 'flex' : 'none';
+  renderLogLevels();
+  document.getElementById('log-level').value = settings.logLevel ?? DEFAULT_SETTINGS.logLevel;
 
-  // Excluded domains
+  document.getElementById('ai-enabled').checked = Boolean(settings.aiEnabled);
+
   renderExcludedDomains();
-
-  // Custom categories
   renderCustomCategories();
-
-  // Domain overrides
   renderDomainOverrides();
+}
+
+function renderLogLevels() {
+  const select = document.getElementById('log-level');
+  render(select, html`${LOG_LEVELS.map((level) => html`<option value="${level}">${level}</option>`)}`);
 }
 
 function renderExcludedDomains() {
   const container = document.getElementById('excluded-list');
-  if (settings.excludedDomains.length === 0) {
-    container.innerHTML = '<span style="font-size:12px;color:#666;">No excluded domains</span>';
+  const domains = settings.excludedDomains || [];
+
+  if (domains.length === 0) {
+    render(container, html`<span class="empty-hint">No excluded domains</span>`);
     return;
   }
 
-  container.innerHTML = settings.excludedDomains
-    .map((domain) => `
-      <span class="excluded-chip">
-        ${domain}
-        <button class="remove-btn" data-domain="${domain}">&times;</button>
-      </span>
-    `)
-    .join('');
+  render(container, html`${domains.map((domain) => html`
+    <span class="excluded-chip">
+      ${domain}
+      <button class="remove-btn" data-domain="${domain}" aria-label="Remove ${domain}">&times;</button>
+    </span>
+  `)}`);
 
-  container.querySelectorAll('.remove-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      settings.excludedDomains = settings.excludedDomains.filter((d) => d !== btn.dataset.domain);
-      renderExcludedDomains();
-    });
-  });
+  bindAll(container, '.remove-btn', 'click', (btn) => removeExcludedDomain(btn.dataset.domain));
 }
 
 function renderCustomCategories() {
   const container = document.getElementById('custom-categories');
-  if (!categories.custom || categories.custom.length === 0) {
-    container.innerHTML = '<p style="font-size:12px;color:#666;">No custom categories yet</p>';
+  const custom = categories.custom || [];
+
+  if (custom.length === 0) {
+    render(container, html`<p class="empty-hint">No custom categories yet</p>`);
     return;
   }
 
-  container.innerHTML = categories.custom
-    .map((cat, i) => `
-      <div class="custom-cat-item">
-        <span class="custom-cat-color" style="background:${cat.color}"></span>
-        <span class="custom-cat-name">${cat.name}</span>
-        <span class="custom-cat-rules">${cat.rules.map((r) => r.value).join(', ') || 'No rules'}</span>
-        <button class="btn btn-danger btn-small" data-index="${i}">Remove</button>
-      </div>
-    `)
-    .join('');
+  render(container, html`${custom.map((cat) => html`
+    <div class="custom-cat-item">
+      <span class="custom-cat-color" style="background:${cssColor(cat.color)}"></span>
+      <span class="custom-cat-name">${cat.name}</span>
+      <span class="custom-cat-rules">${cat.rules.map((r) => r.value).join(', ') || 'No rules'}</span>
+      <button class="btn btn-danger btn-small" data-category-id="${cat.id}">Remove</button>
+    </div>
+  `)}`);
 
-  container.querySelectorAll('.btn-danger').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      categories.custom.splice(parseInt(btn.dataset.index, 10), 1);
-      renderCustomCategories();
-    });
-  });
+  bindAll(container, '[data-category-id]', 'click', (btn) => removeCustomCategory(btn.dataset.categoryId));
 }
 
 function renderDomainOverrides() {
   const container = document.getElementById('overrides-list');
-  const overrides = categories.domainOverrides || {};
-  const entries = Object.entries(overrides);
+  const entries = Object.entries(categories.domainOverrides || {});
 
   if (entries.length === 0) {
-    container.innerHTML = '<p style="font-size:12px;color:#666;">No domain overrides</p>';
+    render(container, html`<p class="empty-hint">No domain overrides</p>`);
     return;
   }
 
-  const allCats = [...DEFAULT_CATEGORIES, ...(categories.custom || [])];
-  const catMap = {};
-  for (const c of allCats) catMap[c.id] = c;
-
-  container.innerHTML = entries
-    .map(([domain, catId]) => {
-      const cat = catMap[catId] || { name: catId, color: '#9E9E9E', icon: '?' };
-      return `
-        <div class="override-item">
-          <span class="override-domain">${domain}</span>
-          <div class="override-category">
-            <span style="color:${cat.color}">${cat.icon} ${cat.name}</span>
-            <button class="btn btn-danger btn-small" data-domain="${domain}">Remove</button>
-          </div>
+  render(container, html`${entries.map(([domain, catId]) => {
+    const cat = registry.get(catId);
+    return html`
+      <div class="override-item">
+        <span class="override-domain">${domain}</span>
+        <div class="override-category">
+          <span style="color:${cssColor(cat.color)}">${cat.icon} ${cat.name}</span>
+          <button class="btn btn-danger btn-small" data-domain="${domain}">Remove</button>
         </div>
-      `;
-    })
-    .join('');
+      </div>
+    `;
+  })}`);
 
-  container.querySelectorAll('.btn-danger').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      delete categories.domainOverrides[btn.dataset.domain];
-      renderDomainOverrides();
-    });
+  bindAll(container, '[data-domain]', 'click', (btn) => removeDomainOverride(btn.dataset.domain));
+}
+
+/** Attach a handler to every match, passing the element itself. */
+function bindAll(container, selector, event, handler) {
+  container.querySelectorAll(selector).forEach((el) => {
+    el.addEventListener(event, () => handler(el));
   });
 }
 
-// ─── AI Status Check ───────────────────────────────────────────────
+// ─── Mutations (persist immediately) ───────────────────────────────
 
+async function removeExcludedDomain(domain) {
+  await withErrorReporting('remove excluded domain', async () => {
+    settings.excludedDomains = (settings.excludedDomains || []).filter((d) => d !== domain);
+    await storage.saveSettings(settings);
+    renderExcludedDomains();
+    showStatus(`Removed ${domain}`);
+  });
+}
+
+async function addExcludedDomain() {
+  const input = document.getElementById('new-excluded');
+  const domain = normalizeDomainInput(input.value);
+
+  if (!domain) {
+    showStatus('Enter a valid domain, e.g. example.com', 'error');
+    return;
+  }
+  if ((settings.excludedDomains || []).includes(domain)) {
+    showStatus(`${domain} is already excluded`, 'error');
+    return;
+  }
+
+  await withErrorReporting('add excluded domain', async () => {
+    settings.excludedDomains = [...(settings.excludedDomains || []), domain];
+    await storage.saveSettings(settings);
+    input.value = '';
+    renderExcludedDomains();
+    showStatus(`Excluded ${domain}`);
+  });
+}
+
+async function removeCustomCategory(categoryId) {
+  await withErrorReporting('remove category', async () => {
+    categories = await storage.removeCustomCategory(categoryId);
+    registry = createCategoryRegistry(categories);
+    renderCustomCategories();
+    renderDomainOverrides();
+    showStatus('Category removed');
+  });
+}
+
+async function addCustomCategory() {
+  const nameInput = document.getElementById('new-cat-name');
+  const colorInput = document.getElementById('new-cat-color');
+  const domainInput = document.getElementById('new-cat-domain');
+
+  const name = nameInput.value.trim();
+  if (!name) {
+    showStatus('Category name is required', 'error');
+    return;
+  }
+
+  const domainRule = normalizeDomainInput(domainInput.value);
+  if (domainInput.value.trim() && !domainRule) {
+    showStatus('Domain rule is not a valid domain', 'error');
+    return;
+  }
+
+  await withErrorReporting('add category', async () => {
+    categories = await storage.addCustomCategory({
+      id: `custom_${Date.now()}`,
+      name,
+      color: cssColor(colorInput.value, '#667eea'),
+      icon: '🏷️',
+      isBuiltIn: false,
+      rules: domainRule ? [{ type: 'domain', value: domainRule }] : [],
+    });
+    registry = createCategoryRegistry(categories);
+
+    nameInput.value = '';
+    domainInput.value = '';
+    renderCustomCategories();
+    showStatus(`Added ${name}`);
+  });
+}
+
+async function removeDomainOverride(domain) {
+  await withErrorReporting('remove override', async () => {
+    categories = await storage.removeDomainOverride(domain);
+    registry = createCategoryRegistry(categories);
+    renderDomainOverrides();
+    showStatus(`Removed override for ${domain}`);
+  });
+}
+
+/**
+ * Normalise and validate a user-entered domain.
+ * Accepts a bare host or a full URL; returns '' when it is not a usable host.
+ */
+function normalizeDomainInput(raw) {
+  const value = String(raw || '').trim().toLowerCase();
+  if (!value) return '';
+
+  const host = value.includes('://')
+    ? safeHostname(value)
+    : value.split('/')[0];
+
+  if (!host) return '';
+  // Reject anything that is not a plausible hostname.
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(host)) return '';
+  return host.replace(/^www\./, '');
+}
+
+function safeHostname(value) {
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+// ─── On-device Model Status ────────────────────────────────────────
+
+/**
+ * Report model availability and expose the download only when it is actually
+ * needed. The download is several gigabytes, so it is never started implicitly.
+ */
 async function checkAIStatus() {
   const statusEl = document.getElementById('ai-status');
+  const downloadRow = document.getElementById('ai-download-row');
 
-  // Check Chrome built-in AI
-  let builtInAvailable = false;
-  try {
-    if (self.ai && self.ai.languageModel) {
-      const caps = await self.ai.languageModel.capabilities();
-      builtInAvailable = caps.available !== 'no';
+  const status = await aiClassifier.status();
+  downloadRow.hidden = status !== AI_STATUS.DOWNLOADABLE;
+
+  const messages = {
+    [AI_STATUS.AVAILABLE]: {
+      className: 'ai-status available',
+      text: settings.aiEnabled
+        ? 'Model ready. Unknown sites are categorized on your device.'
+        : 'Model ready. Turn on the switch above to use it.',
+    },
+    [AI_STATUS.DOWNLOADABLE]: {
+      className: 'ai-status unavailable',
+      text: 'Chrome supports on-device AI, but the model has not been downloaded yet. It is a large one-time download.',
+    },
+    [AI_STATUS.DOWNLOADING]: {
+      className: 'ai-status unavailable',
+      text: 'The model is downloading. This page will report when it is ready.',
+    },
+    [AI_STATUS.UNSUPPORTED]: {
+      className: 'ai-status unavailable',
+      text: 'This version of Chrome does not provide the built-in AI model. Unknown sites will be queued for manual categorization.',
+    },
+  };
+
+  const { className, text } = messages[status] ?? {
+    className: 'ai-status unavailable',
+    text: 'The on-device model is unavailable on this device. Unknown sites will be queued for manual categorization.',
+  };
+
+  statusEl.className = className;
+  statusEl.textContent = text;
+}
+
+async function downloadModel() {
+  const button = document.getElementById('ai-download');
+  const track = document.getElementById('ai-progress');
+  const fill = document.getElementById('ai-progress-fill');
+
+  button.disabled = true;
+  track.hidden = false;
+  fill.style.width = '0%';
+
+  await withErrorReporting('download the model', async () => {
+    try {
+      await aiClassifier.download((fraction) => {
+        fill.style.width = `${Math.round(Math.min(1, Math.max(0, fraction)) * 100)}%`;
+      });
+      showStatus('Model downloaded');
+    } finally {
+      button.disabled = false;
+      track.hidden = true;
+      await checkAIStatus();
     }
-  } catch { /* ignore */ }
-
-  if (builtInAvailable) {
-    statusEl.className = 'ai-status available';
-    statusEl.textContent = 'Chrome Built-in AI (Gemini Nano) is available. No API key needed.';
-  } else if (settings.aiApiKey && settings.aiProvider) {
-    statusEl.className = 'ai-status available';
-    statusEl.textContent = `External AI configured: ${settings.aiProvider}`;
-  } else {
-    statusEl.className = 'ai-status unavailable';
-    statusEl.textContent = 'No AI available. Unknown sites will be queued for manual categorization. Add an API key or enable Chrome built-in AI for auto-classification.';
-  }
+  });
 }
 
 // ─── Event Listeners ───────────────────────────────────────────────
 
 function setupEventListeners() {
-  // AI provider toggle
-  document.getElementById('ai-provider').addEventListener('change', (e) => {
-    document.getElementById('api-key-row').style.display = e.target.value ? 'flex' : 'none';
+  document.getElementById('ai-download').addEventListener('click', downloadModel);
+
+  document.getElementById('add-excluded').addEventListener('click', addExcludedDomain);
+  document.getElementById('new-excluded').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') addExcludedDomain();
   });
 
-  // Add excluded domain
-  document.getElementById('add-excluded').addEventListener('click', () => {
-    const input = document.getElementById('new-excluded');
-    const domain = input.value.trim().toLowerCase();
-    if (domain && !settings.excludedDomains.includes(domain)) {
-      settings.excludedDomains.push(domain);
-      renderExcludedDomains();
-      input.value = '';
-    }
-  });
+  document.getElementById('add-category').addEventListener('click', addCustomCategory);
+  document.getElementById('save-settings').addEventListener('click', saveSettings);
 
-  // Add custom category
-  document.getElementById('add-category').addEventListener('click', () => {
-    const name = document.getElementById('new-cat-name').value.trim();
-    const color = document.getElementById('new-cat-color').value;
-    const domainRule = document.getElementById('new-cat-domain').value.trim();
-
-    if (!name) return;
-
-    const id = 'custom_' + Date.now();
-    const newCat = {
-      id,
-      name,
-      color,
-      icon: '\uD83C\uDFF7\uFE0F',
-      isBuiltIn: false,
-      rules: domainRule ? [{ type: 'domain', value: domainRule }] : [],
-    };
-
-    if (!categories.custom) categories.custom = [];
-    categories.custom.push(newCat);
-    renderCustomCategories();
-
-    document.getElementById('new-cat-name').value = '';
-    document.getElementById('new-cat-domain').value = '';
-  });
-
-  // Save settings
-  document.getElementById('save-settings').addEventListener('click', saveAll);
-
-  // Danger zone
   document.getElementById('clear-history').addEventListener('click', () => {
     showConfirmDialog({
       title: 'Clear Browsing History?',
-      message: 'This will permanently delete all your tracked sessions, daily aggregates, and learned categorization data. Your settings, custom categories, and domain overrides will be preserved.\n\nThis cannot be undone.',
+      message:
+        'This will permanently delete all your tracked sessions, daily aggregates, and learned categorization data. Your settings, custom categories, and domain overrides will be preserved.\n\nThis cannot be undone.',
       onConfirm: async () => {
-        await chrome.runtime.sendMessage({ type: MSG.CLEAR_HISTORY });
-        showSaveStatus('Browsing history cleared');
+        await sendMessage({ type: MSG.CLEAR_HISTORY });
+        showStatus('Browsing history cleared');
       },
     });
   });
@@ -227,18 +368,52 @@ function setupEventListeners() {
   document.getElementById('clear-all').addEventListener('click', () => {
     showConfirmDialog({
       title: 'Reset Everything?',
-      message: 'This will permanently delete EVERYTHING:\n\u2022 All tracked sessions and aggregates\n\u2022 All settings (back to defaults)\n\u2022 All custom categories\n\u2022 All domain overrides\n\u2022 AI API keys\n\nThis cannot be undone.',
+      message:
+        'This will permanently delete EVERYTHING:\n• All tracked sessions and aggregates\n• All settings (back to defaults)\n• All custom categories\n• All domain overrides\n• AI API keys\n\nThis cannot be undone.',
       onConfirm: async () => {
-        await chrome.runtime.sendMessage({ type: MSG.RESET_EVERYTHING });
-        showSaveStatus('Everything reset');
-        // Reload the page to show defaults
-        setTimeout(() => location.reload(), 1000);
+        await sendMessage({ type: MSG.RESET_EVERYTHING });
+        // Re-read from storage rather than keeping the pre-reset snapshot,
+        // which a later Save would otherwise write back.
+        await loadState();
+        renderAll();
+        await checkAIStatus();
+        showStatus('Everything reset to defaults');
       },
     });
   });
 }
 
-// ─── Confirmation Dialog ────────────────────────────────────────────
+// ─── Save (settings only — see module header) ──────────────────────
+
+async function saveSettings() {
+  await withErrorReporting('save settings', async () => {
+    settings.trackingEnabled = document.getElementById('tracking-enabled').checked;
+    settings.idleThresholdSeconds = clampInt(
+      document.getElementById('idle-threshold').value,
+      SETTINGS_LIMITS.idleThresholdSeconds
+    );
+    settings.retentionDays = clampInt(
+      document.getElementById('retention-days').value,
+      SETTINGS_LIMITS.retentionDays
+    );
+    settings.youtubeDeepTracking = document.getElementById('youtube-tracking').checked;
+    settings.aiEnabled = document.getElementById('ai-enabled').checked;
+
+    const level = document.getElementById('log-level').value;
+    settings.logLevel = LOG_LEVELS.includes(level) ? level : DEFAULT_SETTINGS.logLevel;
+
+    await storage.saveSettings(settings);
+
+    // Reflect any clamping back into the form so the user sees what was stored.
+    document.getElementById('idle-threshold').value = settings.idleThresholdSeconds;
+    document.getElementById('retention-days').value = settings.retentionDays;
+
+    showStatus('Settings saved');
+    await checkAIStatus();
+  });
+}
+
+// ─── Confirmation Dialog ───────────────────────────────────────────
 
 function showConfirmDialog({ title, message, onConfirm }) {
   const modal = document.getElementById('confirm-modal');
@@ -246,55 +421,59 @@ function showConfirmDialog({ title, message, onConfirm }) {
   document.getElementById('confirm-message').textContent = message;
   modal.style.display = 'flex';
 
-  const okBtn = document.getElementById('confirm-ok');
-  const cancelBtn = document.getElementById('confirm-cancel');
+  // Replace the buttons to drop listeners from any previous invocation.
+  const okBtn = replaceNode(document.getElementById('confirm-ok'));
+  const cancelBtn = replaceNode(document.getElementById('confirm-cancel'));
 
-  // Remove any previous listeners by cloning
-  const newOkBtn = okBtn.cloneNode(true);
-  const newCancelBtn = cancelBtn.cloneNode(true);
-  okBtn.parentNode.replaceChild(newOkBtn, okBtn);
-  cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+  const close = () => { modal.style.display = 'none'; };
 
-  newOkBtn.addEventListener('click', async () => {
-    modal.style.display = 'none';
-    try {
-      await onConfirm();
-    } catch (err) {
-      console.error('[Track Daily] Action failed:', err);
-      alert('Action failed: ' + err.message);
-    }
+  okBtn.addEventListener('click', async () => {
+    close();
+    await withErrorReporting('complete action', onConfirm);
   });
-
-  newCancelBtn.addEventListener('click', () => {
-    modal.style.display = 'none';
-  });
+  cancelBtn.addEventListener('click', close);
 }
 
-function showSaveStatus(msg) {
-  const status = document.getElementById('save-status');
-  status.textContent = msg;
-  setTimeout(() => { status.textContent = ''; }, 3000);
+function replaceNode(node) {
+  const clone = node.cloneNode(true);
+  node.parentNode.replaceChild(clone, node);
+  return clone;
 }
 
-// ─── Save ──────────────────────────────────────────────────────────
+// ─── Messaging & Status ────────────────────────────────────────────
 
-async function saveAll() {
-  // Collect settings from form
-  settings.trackingEnabled = document.getElementById('tracking-enabled').checked;
-  settings.idleThresholdSeconds = parseInt(document.getElementById('idle-threshold').value, 10) || 120;
-  settings.retentionDays = parseInt(document.getElementById('retention-days').value, 10) || 90;
-  settings.youtubeDeepTracking = document.getElementById('youtube-tracking').checked;
-  settings.aiProvider = document.getElementById('ai-provider').value;
-  settings.aiApiKey = document.getElementById('ai-api-key').value;
+/**
+ * Send a message to the service worker, surfacing handler-side errors as
+ * rejections rather than silently resolving with an error payload.
+ */
+async function sendMessage(message) {
+  const response = await chrome.runtime.sendMessage(message);
+  if (response?.error) throw new Error(response.error);
+  return response;
+}
 
-  await chrome.storage.local.set({
-    [STORAGE_KEYS.SETTINGS]: settings,
-    [STORAGE_KEYS.CATEGORIES]: categories,
-  });
+/**
+ * Run an action, reporting failures to both the console and the user.
+ * Previously these failures were invisible — the UI simply did nothing.
+ */
+async function withErrorReporting(label, action) {
+  try {
+    await action();
+  } catch (err) {
+    log.error(`Failed to ${label}:`, err);
+    showStatus(`Could not ${label}: ${err.message}`, 'error');
+  }
+}
 
+let statusTimer = null;
+
+function showStatus(message, kind = 'success') {
   const status = document.getElementById('save-status');
-  status.textContent = 'Settings saved!';
-  setTimeout(() => { status.textContent = ''; }, 3000);
-
-  checkAIStatus();
+  status.textContent = message;
+  status.className = `save-status ${kind}`;
+  if (statusTimer) clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => {
+    status.textContent = '';
+    status.className = 'save-status';
+  }, 4000);
 }

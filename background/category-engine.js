@@ -1,4 +1,8 @@
-import { KEYWORD_HINTS, YOUTUBE_CATEGORY_MAP } from '../shared/constants.js';
+import {
+  KEYWORD_HINTS,
+  YOUTUBE_CATEGORY_MAP,
+  YOUTUBE_TITLE_HINTS,
+} from '../shared/constants.js';
 import { tokenize, jaccardSimilarity } from '../shared/utils.js';
 import * as storage from './storage-manager.js';
 
@@ -26,15 +30,18 @@ export async function classifyPage({ domain, url, title, metaDescription, youtub
     return { categoryId: override, method: 'domain_override' };
   }
 
-  // Step 2: Domain Rules (built-in + custom)
-  const allCategories = [...categories.custom, ...categories.builtIn];
+  // Step 2: YouTube sub-classification.
+  // Runs BEFORE domain rules: youtube.com matches the Entertainment rule, so
+  // checking rules first would short-circuit every video into Entertainment
+  // and the per-video categorization below would never run.
+  if (isYouTubeDomain(domain) && youtubeMeta) {
+    return classifyYouTube(youtubeMeta, categories);
+  }
+
+  // Step 3: Domain Rules (built-in + custom)
+  const allCategories = [...(categories.custom || []), ...categories.builtIn];
   const ruleMatch = matchDomainRules(domain, url, allCategories);
   if (ruleMatch) {
-    // Step 3: YouTube sub-classification (refine if domain matched youtube)
-    if (isYouTubeDomain(domain) && youtubeMeta) {
-      const ytResult = classifyYouTube(youtubeMeta, categories);
-      if (ytResult) return ytResult;
-    }
     return { categoryId: ruleMatch, method: 'domain_rule' };
   }
 
@@ -81,20 +88,30 @@ function matchDomainRules(domain, url, categories) {
 
 // ─── Step 3: YouTube Sub-classification ────────────────────────────
 
-function isYouTubeDomain(domain) {
-  return domain === 'youtube.com' || domain === 'www.youtube.com' || domain === 'm.youtube.com';
+export function isYouTubeDomain(domain) {
+  // extractDomain() has already stripped "www.", so only real subdomains remain.
+  return domain === 'youtube.com' || domain === 'm.youtube.com';
 }
 
-function classifyYouTube(youtubeMeta, categories) {
-  // Check channel override first
-  if (youtubeMeta.channelName && categories.channelOverrides) {
-    const channelOverride = categories.channelOverrides[youtubeMeta.channelName];
-    if (channelOverride) {
-      return { categoryId: channelOverride, method: 'youtube_channel_override' };
-    }
+/**
+ * Classify a YouTube video. This is the single source of truth for YouTube
+ * categorization — the content script reports raw metadata and nothing else,
+ * so the keyword tables and the category mapping live in one place only.
+ *
+ * Always returns a result: YouTube time is never left uncategorized, because
+ * we already know at minimum that it is YouTube.
+ *
+ * @returns {{categoryId: string, method: string}}
+ */
+export function classifyYouTube(youtubeMeta, categories) {
+  // 1. Channel override — the user's explicit choice wins
+  const channelOverride = youtubeMeta.channelName &&
+    categories.channelOverrides?.[youtubeMeta.channelName];
+  if (channelOverride) {
+    return { categoryId: channelOverride, method: 'youtube_channel_override' };
   }
 
-  // Map YouTube's category to our categories
+  // 2. YouTube's own category for the video
   if (youtubeMeta.videoCategory) {
     const mapped = YOUTUBE_CATEGORY_MAP[youtubeMeta.videoCategory];
     if (mapped) {
@@ -102,7 +119,27 @@ function classifyYouTube(youtubeMeta, categories) {
     }
   }
 
-  return null; // Fall back to default entertainment
+  // 3. Infer YouTube's category from the title, then map it as above
+  const inferred = inferYouTubeCategoryFromTitle(youtubeMeta.videoTitle);
+  if (inferred && YOUTUBE_CATEGORY_MAP[inferred]) {
+    return { categoryId: YOUTUBE_CATEGORY_MAP[inferred], method: 'youtube_title_hint' };
+  }
+
+  // 4. It is still YouTube
+  return { categoryId: 'entertainment', method: 'youtube_default' };
+}
+
+/**
+ * Guess YouTube's category name from a video title.
+ * Returns '' when nothing matches.
+ */
+export function inferYouTubeCategoryFromTitle(title) {
+  if (!title) return '';
+  const text = title.toLowerCase();
+  for (const [category, keywords] of Object.entries(YOUTUBE_TITLE_HINTS)) {
+    if (keywords.some((k) => text.includes(k))) return category;
+  }
+  return '';
 }
 
 // ─── Step 4: Keyword Heuristics ────────────────────────────────────
@@ -161,14 +198,19 @@ async function matchSimilarity(domain, title) {
 
 /**
  * Record a user's manual categorization for future similarity matching.
+ *
+ * The entry ID is the domain itself, so re-categorizing a site overwrites its
+ * previous entry instead of appending another row. With random IDs this store
+ * grew without bound and every classification did a linear Jaccard scan over
+ * the accumulated duplicates.
  */
 export async function learnFromUserCategorization(domain, title, categoryId) {
-  const { createSimilarityEntry } = await import('../shared/data-models.js');
-  const entry = createSimilarityEntry({
+  await storage.saveSimilarityEntry({
+    id: domain,
     domain,
     titleTokens: tokenize(title),
     domainTokens: tokenize(domain.replace(/\./g, ' ')),
     categoryId,
+    createdAt: Date.now(),
   });
-  await storage.saveSimilarityEntry(entry);
 }

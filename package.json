@@ -1,0 +1,13 @@
+{
+  "name": "track-daily",
+  "version": "1.0.0",
+  "description": "Chrome extension that tracks and analyzes browsing habits with automatic categorization and YouTube deep analytics.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -28,14 +28,14 @@
           <label>Idle Threshold (seconds)</label>
           <p>How long before you're considered idle</p>
         </div>
-        <input type="number" id="idle-threshold" min="30" max="600" value="120" class="input-number">
+        <input type="number" id="idle-threshold" min="15" max="3600" value="120" class="input-number">
       </div>
       <div class="setting-row">
         <div class="setting-info">
           <label>Data Retention (days)</label>
           <p>Auto-delete browsing data older than this</p>
         </div>
-        <input type="number" id="retention-days" min="7" max="365" value="90" class="input-number">
+        <input type="number" id="retention-days" min="1" max="3650" value="90" class="input-number">
       </div>
       <div class="setting-row">
         <div class="setting-info">
@@ -46,6 +46,13 @@
           <input type="checkbox" id="youtube-tracking" checked>
           <span class="slider"></span>
         </label>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <label for="log-level">Console Logging</label>
+          <p>How much detail the extension writes to the developer console</p>
+        </div>
+        <select id="log-level" class="input-select"></select>
       </div>
     </section>
 
@@ -60,28 +67,34 @@
       </div>
     </section>
 
-    <!-- AI Classification -->
+    <!-- On-device Classification -->
     <section class="section">
-      <h2>AI Classification</h2>
-      <p class="section-desc">Optional: provide an API key to auto-classify unknown websites.</p>
+      <h2>On-device Classification</h2>
+      <p class="section-desc">
+        Use Chrome's built-in AI model to automatically categorize unknown websites.
+        The model runs entirely on your computer &mdash; no page data, domain, or title
+        is ever sent over the network, and no API key is required.
+      </p>
+
       <div class="setting-row">
         <div class="setting-info">
-          <label>AI Provider</label>
+          <label for="ai-enabled">Enable On-device Classification</label>
+          <p>Off by default. When off, unknown sites are queued for you to categorize manually.</p>
         </div>
-        <select id="ai-provider" class="input-select">
-          <option value="">None (use built-in AI if available)</option>
-          <option value="openai">OpenAI</option>
-          <option value="anthropic">Anthropic</option>
-          <option value="gemini">Google Gemini</option>
-        </select>
+        <label class="toggle-switch">
+          <input type="checkbox" id="ai-enabled">
+          <span class="slider"></span>
+        </label>
       </div>
-      <div class="setting-row" id="api-key-row" style="display:none;">
-        <div class="setting-info">
-          <label>API Key</label>
+
+      <div class="ai-status" id="ai-status">Checking model availability&hellip;</div>
+
+      <div class="ai-download-row" id="ai-download-row" hidden>
+        <button class="btn btn-primary" id="ai-download">Download model</button>
+        <div class="progress-track" id="ai-progress" hidden>
+          <div class="progress-fill" id="ai-progress-fill"></div>
         </div>
-        <input type="password" id="ai-api-key" placeholder="Enter API key" class="input-text">
       </div>
-      <div class="ai-status" id="ai-status"></div>
     </section>
 
     <!-- Custom Categories -->

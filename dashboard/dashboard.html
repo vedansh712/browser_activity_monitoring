@@ -74,12 +74,18 @@
         <!-- Charts Row -->
         <div class="charts-row">
           <div class="card chart-card wide">
-            <h3>Time Trend</h3>
-            <canvas id="time-trend-chart"></canvas>
+            <h3 id="time-trend-title">Time Trend</h3>
+            <div class="chart-wrap">
+              <canvas id="time-trend-chart"></canvas>
+              <p class="chart-empty" id="time-trend-chart-empty" hidden>No data for this period</p>
+            </div>
           </div>
           <div class="card chart-card">
             <h3>Categories</h3>
-            <canvas id="category-doughnut"></canvas>
+            <div class="chart-wrap">
+              <canvas id="category-doughnut"></canvas>
+              <p class="chart-empty" id="category-doughnut-empty" hidden>No data for this period</p>
+            </div>
           </div>
         </div>
 
@@ -130,11 +136,17 @@
         <div class="charts-row">
           <div class="card chart-card">
             <h3>Top Channels</h3>
-            <canvas id="yt-channels-chart"></canvas>
+            <div class="chart-wrap">
+              <canvas id="yt-channels-chart"></canvas>
+              <p class="chart-empty" id="yt-channels-chart-empty" hidden>No YouTube data</p>
+            </div>
           </div>
           <div class="card chart-card">
             <h3>Content Categories</h3>
-            <canvas id="yt-categories-chart"></canvas>
+            <div class="chart-wrap">
+              <canvas id="yt-categories-chart"></canvas>
+              <p class="chart-empty" id="yt-categories-chart-empty" hidden>No YouTube data</p>
+            </div>
           </div>
         </div>
         <div class="card">
@@ -162,6 +174,18 @@
         </div>
       </div>
     </main>
+  </div>
+
+  <!-- Reassign Category Modal -->
+  <div class="modal-backdrop" id="reassign-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="reassign-title">
+      <h3 id="reassign-title">Reassign category</h3>
+      <p class="modal-subtitle" id="reassign-domain"></p>
+      <div class="category-picker" id="reassign-options"></div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="reassign-cancel">Cancel</button>
+      </div>
+    </div>
   </div>
 
   <script src="../lib/chart.umd.min.js"></script>

@@ -1,5 +1,12 @@
-import { createSession, endSession, pauseSession } from '../shared/data-models.js';
-import { extractDomain, generateId } from '../shared/utils.js';
+import {
+  createSession,
+  endSession,
+  pauseSession,
+  resumeSession,
+  sessionElapsed,
+} from '../shared/data-models.js';
+import { MIN_SESSION_MS } from '../shared/constants.js';
+import { extractDomain, generateId, formatDate } from '../shared/utils.js';
 import * as storage from './storage-manager.js';
 
 /**
@@ -17,6 +24,7 @@ export async function startNewSession(tab, categoryId) {
     url: tab.url,
     title: tab.title || '',
     categoryId: categoryId || 'uncategorized',
+    tabId: tab.id ?? null,
   });
 
   await storage.setCurrentSession(session);
@@ -24,23 +32,21 @@ export async function startNewSession(tab, categoryId) {
 }
 
 /**
- * End the current active session and save it to IndexedDB.
+ * End the current session and save it to IndexedDB.
+ *
+ * Paused sessions are ended too — their banked time is real and must not be
+ * discarded just because the clock happened to be stopped.
+ *
  * Returns the ended session or null if there wasn't one.
  */
 export async function endCurrentSession() {
   const current = await storage.getCurrentSession();
-  if (!current || !current.isActive) return null;
+  if (!current) return null;
 
   const ended = endSession(current);
 
-  // Only save sessions longer than 1 second
-  if (ended.duration > 1000) {
-    const hasMeta = ended.meta && ended.meta.videoId;
-    console.log('[Track Daily] Saving session:', ended.domain,
-      '| duration:', Math.round(ended.duration / 1000) + 's',
-      '| category:', ended.categoryId,
-      '| hasMeta:', !!hasMeta,
-      hasMeta ? '| video: ' + ended.meta.videoTitle?.substring(0, 30) : '');
+  // Only save sessions longer than the noise floor
+  if (ended.duration > MIN_SESSION_MS) {
     await storage.saveSession(ended);
   }
 
@@ -50,7 +56,7 @@ export async function endCurrentSession() {
 
 /**
  * Pause the current session (user went idle or window lost focus).
- * Saves partial duration but keeps it restorable.
+ * Banks elapsed time; the session stays restorable.
  */
 export async function pauseCurrentSession() {
   const current = await storage.getCurrentSession();
@@ -66,13 +72,9 @@ export async function pauseCurrentSession() {
  */
 export async function resumeCurrentSession() {
   const current = await storage.getCurrentSession();
-  if (!current) return null;
+  if (!current || current.isActive) return current;
 
-  const resumed = {
-    ...current,
-    startTime: Date.now(), // Reset timer from now
-    isActive: true,
-  };
+  const resumed = resumeSession(current);
   await storage.setCurrentSession(resumed);
   return resumed;
 }
@@ -132,39 +134,36 @@ export async function updateSessionCategory(categoryId) {
 }
 
 /**
- * Flush the current session's accumulated time to storage
- * without ending it. Called periodically by the alarm.
+ * Flush the current session's accumulated time to storage without ending it.
+ * Called periodically by the alarm.
+ *
+ * Writes a closed snapshot carrying everything banked so far, then zeroes the
+ * live session's banked time and restarts its clock. Splitting the record this
+ * way is also what keeps a long session's time attributed to the right day.
  */
 export async function flushCurrentSession() {
   const current = await storage.getCurrentSession();
   if (!current || !current.isActive) return;
 
-  // Save a snapshot to IndexedDB as a completed partial session
   const now = Date.now();
-  const partialDuration = now - current.startTime;
+  const elapsed = sessionElapsed(current, now);
+  if (elapsed <= MIN_SESSION_MS) return;
 
-  if (partialDuration > 1000) {
-    const snapshot = {
-      ...current,
-      id: generateId(), // New unique ID so we don't overwrite previous flushes
-      endTime: now,
-      duration: partialDuration, // Only this flush period's duration
-      isActive: false,
-    };
+  const snapshot = {
+    ...current,
+    id: generateId(), // New unique ID so we don't overwrite previous flushes
+    endTime: now,
+    duration: elapsed,
+    isActive: false,
+    date: formatDate(new Date(now)),
+  };
 
-    const hasMeta = snapshot.meta && snapshot.meta.videoId;
-    console.log('[Track Daily] Flushing session:', snapshot.domain,
-      '| duration:', Math.round(partialDuration / 1000) + 's',
-      '| category:', snapshot.categoryId,
-      '| hasMeta:', !!hasMeta);
+  await storage.saveSession(snapshot);
 
-    await storage.saveSession(snapshot);
-
-    // Reset the current session's timer (keep meta and category)
-    const reset = {
-      ...current,
-      startTime: now,
-    };
-    await storage.setCurrentSession(reset);
-  }
+  // Restart the live session's clock with nothing banked (keep meta and category)
+  await storage.setCurrentSession({
+    ...current,
+    startTime: now,
+    duration: 0,
+  });
 }

@@ -384,6 +384,9 @@ body {
   color: #c0c0c0;
   line-height: 1.5;
   margin-bottom: 20px;
+  /* Confirmation text is set via textContent and uses newlines and bullets;
+     without this the whole warning collapses onto one line. */
+  white-space: pre-line;
 }
 
 .modal-actions {
@@ -422,4 +425,46 @@ body {
 .save-status {
   font-size: 13px;
   color: #4CAF50;
+}
+
+/* Failures were previously invisible — the UI just did nothing. */
+.save-status.error {
+  color: #F44336;
+}
+
+.empty-hint {
+  font-size: 12px;
+  color: #666;
+}
+
+/* ─── On-device model download ────────────────────────── */
+
+.ai-download-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.ai-download-row[hidden] {
+  display: none;
+}
+
+.progress-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-track[hidden] {
+  display: none;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  transition: width 0.2s ease;
 }

@@ -257,6 +257,31 @@ body {
   max-height: 280px;
 }
 
+/* Fixed slot for the empty message, so it replaces the chart rather than
+   being appended to the card on every render. */
+.chart-wrap {
+  position: relative;
+  min-height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chart-wrap > canvas[hidden] {
+  display: none;
+}
+
+.chart-empty {
+  color: #666;
+  font-size: 13px;
+  text-align: center;
+  margin: 0;
+}
+
+.chart-empty[hidden] {
+  display: none;
+}
+
 /* ─── Heatmap ─────────────────────────────────────────── */
 
 .heatmap {
@@ -354,6 +379,17 @@ body {
 
 .data-table th.active {
   color: #667eea;
+}
+
+/* Direction indicator, driven by the data-dir attribute the sort handler sets. */
+.data-table th.sortable[data-dir="asc"]::after {
+  content: " \25B2";
+  font-size: 9px;
+}
+
+.data-table th.sortable[data-dir="desc"]::after {
+  content: " \25BC";
+  font-size: 9px;
 }
 
 .data-table td {
@@ -520,4 +556,88 @@ body {
   .summary-cards {
     grid-template-columns: repeat(2, 1fr);
   }
+}
+
+/* ─── Reassign Modal ──────────────────────────────────── */
+/* Replaces a prompt() that asked users to type a category number. */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal-backdrop[hidden] {
+  display: none;
+}
+
+.modal {
+  background: #1e1e24;
+  border: 1px solid #2e2e36;
+  border-radius: 12px;
+  padding: 24px;
+  width: min(460px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+}
+
+.modal h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  color: #e0e0e0;
+}
+
+.modal-subtitle {
+  margin: 0 0 18px;
+  font-size: 13px;
+  color: #888;
+  word-break: break-all;
+}
+
+.category-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.cat-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #26262e;
+  border: 1px solid #34343e;
+  border-left-width: 3px;
+  border-radius: 8px;
+  color: #d0d0d0;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+}
+
+.cat-choice:hover {
+  background: #2f2f39;
+  transform: translateY(-1px);
+}
+
+.cat-choice:focus-visible {
+  outline: 2px solid #667eea;
+  outline-offset: 2px;
+}
+
+.cat-choice-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
 }

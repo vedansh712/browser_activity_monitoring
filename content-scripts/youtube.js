@@ -9,7 +9,38 @@
   'use strict';
 
   const TAG = '[Track Daily]';
-  console.log(TAG, 'YouTube content script loaded on', location.href);
+
+  // ─── Runtime settings mirror ────────────────────────────────────────
+  // Content scripts can't import the shared modules (they aren't loaded as ES
+  // modules), so the two settings this script needs are mirrored locally and
+  // kept current via storage events. Reading storage per extraction would add
+  // an async hop to a hot path.
+
+  let deepTrackingEnabled = true;
+  let debugEnabled = false;
+
+  function applySettings(settings) {
+    if (!settings) return;
+    deepTrackingEnabled = settings.youtubeDeepTracking !== false;
+    debugEnabled = settings.logLevel === 'debug';
+  }
+
+  chrome.storage.local.get('settings')
+    .then((stored) => applySettings(stored.settings))
+    .catch(() => { /* extension context may be gone */ });
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.settings) applySettings(changes.settings.newValue);
+  });
+
+  /**
+   * Verbose logging, silent unless the user raises the log level.
+   * Video titles and URLs are personal data; they must not be written to the
+   * page console by default, where the user does not expect to find them.
+   */
+  function debug(...args) {
+    if (debugEnabled) console.log(TAG, ...args);
+  }
 
   // ─── State ──────────────────────────────────────────────────────────
 
@@ -55,7 +86,7 @@
     const pageData = event.data.data;
 
     if (pageData && pageData.__ready) {
-      console.log(TAG, 'Injected script ready');
+      debug('Injected script ready');
       // Trigger an initial extraction now that the bridge is up
       setTimeout(requestExtraction, 500);
       return;
@@ -67,7 +98,7 @@
     // Otherwise it's stale (from a previous video) — ignore it.
     const urlVideoId = getVideoId();
     if (pageData.videoId && urlVideoId && pageData.videoId !== urlVideoId) {
-      console.log(TAG, 'Ignoring stale pageData — videoId mismatch',
+      debug('Ignoring stale pageData — videoId mismatch',
         'pageData:', pageData.videoId, 'URL:', urlVideoId);
       return;
     }
@@ -89,6 +120,11 @@
   // ─── Build full metadata and send to service worker ─────────────────
 
   function processAndSend(pageData) {
+    // Honour the user's setting at the source. The service worker also rejects
+    // this message, but stopping here means the page is never scraped for video
+    // metadata at all when deep tracking is off.
+    if (!deepTrackingEnabled) return;
+
     const videoId = getVideoId();
     if (!videoId) return;
 
@@ -120,10 +156,9 @@
     // DOM fallbacks for any missing fields
     fillFromDOM(meta);
 
-    // Category inference from title as last resort
-    if (!meta.videoCategory) {
-      meta.videoCategory = inferCategoryFromTitle(meta.videoTitle);
-    }
+    // NOTE: category inference from the title deliberately does NOT happen here.
+    // The content script reports only what it can observe; all guessing lives in
+    // background/category-engine.js so the keyword tables exist in one place.
 
     // QUALITY GATE: require videoId AND a non-trivial title before sending.
     // Prevents sending partial/wrong data during SPA transitions.
@@ -145,7 +180,7 @@
     lastSentFingerprint = fingerprint;
     lastSentVideoId = meta.videoId;
 
-    console.log(TAG, 'YouTube metadata ready:', {
+    debug('YouTube metadata ready:', {
       videoId: meta.videoId,
       title: meta.videoTitle.substring(0, 60),
       channel: meta.channelName || '(no channel)',
@@ -221,42 +256,11 @@
     return null;
   }
 
-  function inferCategoryFromTitle(title) {
-    if (!title) return '';
-    const t = title.toLowerCase();
-    const hints = {
-      Education: [
-        'tutorial', 'course', 'learn', 'explained', 'how to', 'lecture', 'lesson',
-        'programming', 'python', 'javascript', 'coding', 'beginners', 'complete guide',
-        'crash course', 'masterclass', 'for beginners', 'step by step', 'in hindi',
-        'full course', 'web development', 'data science', 'machine learning',
-      ],
-      'Science & Technology': [
-        'tech', 'review', 'unboxing', 'setup', 'software', 'hardware', ' ai ',
-        'gadget', 'benchmark',
-      ],
-      Music: [
-        'official video', 'official audio', 'music video', 'lyrics',
-        'album', 'remix',
-      ],
-      Gaming: [
-        'gameplay', 'walkthrough', 'playthrough', 'gaming', 'lets play',
-        'minecraft', 'fortnite', 'valorant',
-      ],
-      'News & Politics': ['politics', 'election', 'debate'],
-      Entertainment: ['funny', 'comedy', 'prank', 'challenge', 'reaction', 'vlog'],
-    };
-    for (const [category, keywords] of Object.entries(hints)) {
-      if (keywords.some((k) => t.includes(k))) return category;
-    }
-    return '';
-  }
-
   // ─── Listen for re-request messages from service worker ─────────────
 
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.type === 'REREQUEST_YT_META') {
-      console.log(TAG, 'Re-extraction requested by service worker');
+      debug('Re-extraction requested by service worker');
       // Reset dedup so we re-send
       lastSentFingerprint = null;
       lastSentVideoId = null;
@@ -274,7 +278,7 @@
 
   function onNavigate() {
     const newVideoId = getVideoId();
-    console.log(TAG, 'Navigation detected — new videoId:', newVideoId, 'old:', currentVideoId);
+    debug('Navigation detected — new videoId:', newVideoId, 'old:', currentVideoId);
 
     // CRITICAL: clear stale pending data from the previous video
     pendingPageData = null;
@@ -335,7 +339,7 @@
 
     if (isExpanded !== lastTheaterOrFull) {
       lastTheaterOrFull = isExpanded;
-      console.log(TAG, 'YouTube expanded state changed:', isExpanded,
+      debug('YouTube expanded state changed:', isExpanded,
         '| theater:', isTheater, '| fullscreen:', isFullscreenAttr || isFullscreenAPI);
       chrome.runtime.sendMessage({
         type: 'YOUTUBE_THEATER',

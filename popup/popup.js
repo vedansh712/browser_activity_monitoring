@@ -1,15 +1,14 @@
-import { MSG, DEFAULT_CATEGORIES } from '../shared/constants.js';
-import { formatDuration, formatDurationPrecise } from '../shared/utils.js';
+import { MSG } from '../shared/constants.js';
+import { formatDuration, formatDurationPrecise, faviconUrl } from '../shared/utils.js';
+import { html, render, cssColor } from '../shared/html.js';
+import { createCategoryRegistry } from '../shared/category-registry.js';
+import { createLogger } from '../shared/logger.js';
+import * as storage from '../background/storage-manager.js';
 
-function escapeHtml(s) {
-  if (s === null || s === undefined) return '';
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+const log = createLogger('popup');
+
+/** Populated on load so custom categories render here, not just built-ins. */
+let categories = createCategoryRegistry();
 
 // ─── DOM Elements ──────────────────────────────────────────────────
 
@@ -33,6 +32,11 @@ let sessionElapsed = 0;
 // ─── Init ──────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    categories = createCategoryRegistry(await storage.getCategories());
+  } catch (err) {
+    log.error('Could not load categories:', err);
+  }
   await loadStats();
   await loadUncategorized();
   startSessionTimer();
@@ -107,30 +111,26 @@ function renderTopDomains(domainBreakdown) {
     .slice(0, 5);
 
   if (entries.length === 0) {
-    domainList.innerHTML = '<li class="empty-state">No data yet</li>';
+    render(domainList, html`<li class="empty-state">No data yet</li>`);
     return;
   }
 
   const maxTime = entries[0][1];
-  domainList.innerHTML = entries
-    .map(([domain, time]) => {
-      const barWidth = Math.max(5, (time / maxTime) * 100);
-      const safeDomain = escapeHtml(domain);
-      const encodedDomain = encodeURIComponent(domain);
-      return `
-        <li>
-          <div style="flex:1; min-width:0;">
-            <div class="domain-info">
-              <img class="domain-icon" src="https://www.google.com/s2/favicons?domain=${encodedDomain}&sz=32" alt="" onerror="this.style.display='none'">
-              <span class="domain-name">${safeDomain}</span>
-            </div>
-            <div class="domain-bar" style="width: ${barWidth}%"></div>
+  render(domainList, html`${entries.map(([domain, time]) => {
+    const barWidth = Math.max(5, (time / maxTime) * 100).toFixed(2);
+    return html`
+      <li>
+        <div style="flex:1; min-width:0;">
+          <div class="domain-info">
+            <img class="domain-icon" src="${faviconUrl(domain)}" alt="" onerror="this.style.visibility='hidden'">
+            <span class="domain-name">${domain}</span>
           </div>
-          <span class="domain-time">${formatDuration(time)}</span>
-        </li>
-      `;
-    })
-    .join('');
+          <div class="domain-bar" style="width: ${barWidth}%"></div>
+        </div>
+        <span class="domain-time">${formatDuration(time)}</span>
+      </li>
+    `;
+  })}`);
 }
 
 // ─── Category Chart ────────────────────────────────────────────────
@@ -150,10 +150,6 @@ function renderCategoryChart(categoryBreakdown) {
   }
 
   const total = entries.reduce((sum, [, v]) => sum + v, 0);
-  const categoryMap = {};
-  for (const cat of DEFAULT_CATEGORIES) {
-    categoryMap[cat.id] = cat;
-  }
 
   // Draw doughnut chart
   ctx.clearRect(0, 0, 200, 200);
@@ -162,14 +158,14 @@ function renderCategoryChart(categoryBreakdown) {
   let startAngle = -Math.PI / 2;
 
   for (const [categoryId, time] of entries) {
-    const cat = categoryMap[categoryId] || { color: '#9E9E9E' };
+    const cat = categories.get(categoryId);
     const sliceAngle = (time / total) * Math.PI * 2;
 
     ctx.beginPath();
     ctx.arc(centerX, centerY, outerRadius, startAngle, startAngle + sliceAngle);
     ctx.arc(centerX, centerY, innerRadius, startAngle + sliceAngle, startAngle, true);
     ctx.closePath();
-    ctx.fillStyle = cat.color;
+    ctx.fillStyle = cssColor(cat.color);
     ctx.fill();
 
     startAngle += sliceAngle;
@@ -201,11 +197,10 @@ async function loadUncategorized() {
     uncatDomain.textContent = first.domain;
     uncatNotice.style.display = 'block';
 
-    // Build category buttons
-    const cats = DEFAULT_CATEGORIES.filter((c) => c.id !== 'uncategorized');
-    categoryButtons.innerHTML = cats
-      .map((c) => `<button class="cat-btn" data-id="${escapeHtml(c.id)}">${escapeHtml(c.icon)} ${escapeHtml(c.name)}</button>`)
-      .join('');
+    // Build category buttons — includes the user's custom categories
+    render(categoryButtons, html`${categories.assignable().map((c) =>
+      html`<button class="cat-btn" data-id="${c.id}">${c.icon} ${c.name}</button>`
+    )}`);
 
     // Add click handlers
     categoryButtons.querySelectorAll('.cat-btn').forEach((btn) => {

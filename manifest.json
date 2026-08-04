@@ -4,13 +4,16 @@
   "version": "1.0.0",
   "description": "Track and analyze your browsing habits with detailed time tracking, automatic categorization, and YouTube deep analytics.",
 
+  "minimum_chrome_version": "104",
+
   "permissions": [
     "tabs",
     "idle",
     "storage",
     "alarms",
     "webNavigation",
-    "unlimitedStorage"
+    "unlimitedStorage",
+    "favicon"
   ],
 
   "host_permissions": [
