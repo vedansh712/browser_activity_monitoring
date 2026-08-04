@@ -4,11 +4,34 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Track Daily - Settings</title>
+  <link rel="stylesheet" href="../shared/theme.css">
   <link rel="stylesheet" href="options.css">
 </head>
-<body>
+<body class="hud-grid-bg hud-scanlines">
   <div class="options-container">
-    <h1 class="logo">Track Daily Settings</h1>
+    <h1 class="logo">TRACK<span>/</span>DAILY <em>SETTINGS</em></h1>
+
+    <!-- Appearance -->
+    <section class="section">
+      <h2>Appearance</h2>
+      <p class="section-desc">
+        The entire interface is derived from a single accent colour. Pick any colour you like —
+        text contrast on accent-filled elements is recalculated automatically so it stays readable.
+      </p>
+
+      <div class="setting-row">
+        <div class="setting-info">
+          <label for="accent-color">Accent Colour</label>
+          <p>Applies instantly to the popup, dashboard and this page.</p>
+        </div>
+        <div class="accent-control">
+          <input type="color" id="accent-color" class="accent-wheel" aria-label="Choose accent colour">
+          <code class="accent-hex hud-num" id="accent-hex">#ff2b4a</code>
+        </div>
+      </div>
+
+      <div class="accent-presets" id="accent-presets"></div>
+    </section>
 
     <!-- General Settings -->
     <section class="section">
@@ -18,9 +41,9 @@
           <label>Tracking Enabled</label>
           <p>Enable or disable all browsing tracking</p>
         </div>
-        <label class="toggle-switch">
+        <label class="hud-switch">
           <input type="checkbox" id="tracking-enabled" checked>
-          <span class="slider"></span>
+          <span class="track"></span>
         </label>
       </div>
       <div class="setting-row">
@@ -28,23 +51,23 @@
           <label>Idle Threshold (seconds)</label>
           <p>How long before you're considered idle</p>
         </div>
-        <input type="number" id="idle-threshold" min="15" max="3600" value="120" class="input-number">
+        <input type="number" id="idle-threshold" min="15" max="3600" value="120" class="hud-input is-narrow">
       </div>
       <div class="setting-row">
         <div class="setting-info">
           <label>Data Retention (days)</label>
           <p>Auto-delete browsing data older than this</p>
         </div>
-        <input type="number" id="retention-days" min="1" max="3650" value="90" class="input-number">
+        <input type="number" id="retention-days" min="1" max="3650" value="90" class="hud-input is-narrow">
       </div>
       <div class="setting-row">
         <div class="setting-info">
           <label>YouTube Deep Tracking</label>
           <p>Extract video title, channel, and category from YouTube</p>
         </div>
-        <label class="toggle-switch">
+        <label class="hud-switch">
           <input type="checkbox" id="youtube-tracking" checked>
-          <span class="slider"></span>
+          <span class="track"></span>
         </label>
       </div>
       <div class="setting-row">
@@ -52,7 +75,7 @@
           <label for="log-level">Console Logging</label>
           <p>How much detail the extension writes to the developer console</p>
         </div>
-        <select id="log-level" class="input-select"></select>
+        <select id="log-level" class="hud-select"></select>
       </div>
     </section>
 
@@ -62,8 +85,8 @@
       <p class="section-desc">Domains listed here will not be tracked.</p>
       <div class="excluded-list" id="excluded-list"></div>
       <div class="add-row">
-        <input type="text" id="new-excluded" placeholder="e.g. example.com" class="input-text">
-        <button class="btn btn-primary" id="add-excluded">Add</button>
+        <input type="text" id="new-excluded" placeholder="e.g. example.com" class="hud-input">
+        <button class="hud-btn is-active" id="add-excluded">Add</button>
       </div>
     </section>
 
@@ -81,16 +104,16 @@
           <label for="ai-enabled">Enable On-device Classification</label>
           <p>Off by default. When off, unknown sites are queued for you to categorize manually.</p>
         </div>
-        <label class="toggle-switch">
+        <label class="hud-switch">
           <input type="checkbox" id="ai-enabled">
-          <span class="slider"></span>
+          <span class="track"></span>
         </label>
       </div>
 
       <div class="ai-status" id="ai-status">Checking model availability&hellip;</div>
 
       <div class="ai-download-row" id="ai-download-row" hidden>
-        <button class="btn btn-primary" id="ai-download">Download model</button>
+        <button class="hud-btn is-active" id="ai-download">Download model</button>
         <div class="progress-track" id="ai-progress" hidden>
           <div class="progress-fill" id="ai-progress-fill"></div>
         </div>
@@ -102,10 +125,10 @@
       <h2>Custom Categories</h2>
       <div class="custom-categories" id="custom-categories"></div>
       <div class="add-category-form" id="add-category-form">
-        <input type="text" id="new-cat-name" placeholder="Category name" class="input-text">
+        <input type="text" id="new-cat-name" placeholder="Category name" class="hud-input">
         <input type="color" id="new-cat-color" value="#667eea" class="input-color">
-        <input type="text" id="new-cat-domain" placeholder="Domain rule (e.g. example.com)" class="input-text">
-        <button class="btn btn-primary" id="add-category">Add Category</button>
+        <input type="text" id="new-cat-domain" placeholder="Domain rule (e.g. example.com)" class="hud-input">
+        <button class="hud-btn is-active" id="add-category">Add Category</button>
       </div>
     </section>
 
@@ -126,7 +149,7 @@
           <label>Clear Browsing History</label>
           <p>Delete all tracked sessions and analytics. Keeps your settings and custom categories.</p>
         </div>
-        <button class="btn btn-danger" id="clear-history">Clear History</button>
+        <button class="hud-btn is-danger" id="clear-history">Clear History</button>
       </div>
 
       <div class="setting-row">
@@ -134,25 +157,25 @@
           <label>Reset Everything</label>
           <p>Delete ALL data: sessions, settings, custom categories, domain overrides. Resets to defaults.</p>
         </div>
-        <button class="btn btn-danger" id="clear-all">Reset All</button>
+        <button class="hud-btn is-danger" id="clear-all">Reset All</button>
       </div>
     </section>
 
     <!-- Confirmation Modal -->
-    <div class="modal-backdrop" id="confirm-modal" style="display: none;">
-      <div class="modal">
+    <div class="hud-modal-backdrop" id="confirm-modal" hidden>
+      <div class="hud-modal" role="dialog" aria-modal="true">
         <h3 id="confirm-title">Are you sure?</h3>
         <p id="confirm-message"></p>
-        <div class="modal-actions">
-          <button class="btn btn-secondary" id="confirm-cancel">Cancel</button>
-          <button class="btn btn-danger" id="confirm-ok">Yes, delete</button>
+        <div class="hud-modal-actions">
+          <button class="hud-btn" id="confirm-cancel">Cancel</button>
+          <button class="hud-btn is-danger" id="confirm-ok">Yes, delete</button>
         </div>
       </div>
     </div>
 
     <div class="save-bar">
       <span class="save-status" id="save-status"></span>
-      <button class="btn btn-primary" id="save-settings">Save Settings</button>
+      <button class="hud-btn is-active" id="save-settings">Save Settings</button>
     </div>
   </div>
 

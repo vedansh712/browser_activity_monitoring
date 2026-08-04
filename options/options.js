@@ -4,10 +4,11 @@ import {
   LOG_LEVELS,
   MSG,
 } from '../shared/constants.js';
-import { AI_STATUS } from '../shared/constants.js';
+import { AI_STATUS, ACCENT_PRESETS, DEFAULT_ACCENT } from '../shared/constants.js';
 import { clampInt } from '../shared/utils.js';
 import { html, render, cssColor } from '../shared/html.js';
 import { createCategoryRegistry } from '../shared/category-registry.js';
+import { initTheme, applyAccent, normalizeAccent } from '../shared/theme.js';
 import { createLogger } from '../shared/logger.js';
 import * as storage from '../background/storage-manager.js';
 import { aiClassifier } from '../background/container.js';
@@ -44,6 +45,7 @@ let registry = createCategoryRegistry(categories);
 
 document.addEventListener('DOMContentLoaded', async () => {
   try {
+    await initTheme();
     await loadState();
     renderAll();
     setupEventListeners();
@@ -79,9 +81,68 @@ function renderAll() {
 
   document.getElementById('ai-enabled').checked = Boolean(settings.aiEnabled);
 
+  renderAccent();
   renderExcludedDomains();
   renderCustomCategories();
   renderDomainOverrides();
+}
+
+// ─── Accent picker ─────────────────────────────────────────────────
+
+/**
+ * The colour wheel and its presets.
+ *
+ * Every accent variant in the theme is derived from one custom property, so
+ * changing it here re-skins all three surfaces. The change is applied to the
+ * live page immediately for feedback, and persisted on release — dragging
+ * through a colour wheel fires `input` continuously, and writing to storage on
+ * every one of those events would hammer it for no benefit.
+ */
+function renderAccent() {
+  const current = normalizeAccent(settings.accentColor ?? DEFAULT_ACCENT);
+
+  document.getElementById('accent-color').value = current;
+  document.getElementById('accent-hex').textContent = current.toUpperCase();
+
+  const container = document.getElementById('accent-presets');
+  render(container, html`${ACCENT_PRESETS.map((preset) => html`
+    <button class="preset ${preset.value === current ? 'is-active' : ''}"
+            data-color="${preset.value}"
+            title="${preset.name}"
+            aria-label="${preset.name}">
+      <i style="background:${cssColor(preset.value)};color:${cssColor(preset.value)}"></i>
+    </button>
+  `)}`);
+
+  bindAll(container, '.preset', 'click', (btn) => selectAccent(btn.dataset.color, true));
+}
+
+/** Preview the colour on this page without writing to storage. */
+function previewAccent(value) {
+  const colour = applyAccent(value);
+  document.getElementById('accent-hex').textContent = colour.toUpperCase();
+  return colour;
+}
+
+/** Apply and persist. */
+async function selectAccent(value, rerender = false) {
+  const colour = previewAccent(value);
+  settings.accentColor = colour;
+
+  await withErrorReporting('save accent colour', async () => {
+    await storage.saveSettings(settings);
+    if (rerender) renderAccent();
+    else {
+      document.getElementById('accent-color').value = colour;
+      markActivePreset(colour);
+    }
+  });
+}
+
+function markActivePreset(colour) {
+  document.querySelectorAll('.preset').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.dataset.color === colour);
+  });
 }
 
 function renderLogLevels() {
@@ -343,6 +404,12 @@ async function downloadModel() {
 // ─── Event Listeners ───────────────────────────────────────────────
 
 function setupEventListeners() {
+  const wheel = document.getElementById('accent-color');
+  // `input` fires continuously while dragging — preview only.
+  wheel.addEventListener('input', (e) => previewAccent(e.target.value));
+  // `change` fires once the picker closes — that is when it is worth storing.
+  wheel.addEventListener('change', (e) => selectAccent(e.target.value));
+
   document.getElementById('ai-download').addEventListener('click', downloadModel);
 
   document.getElementById('add-excluded').addEventListener('click', addExcludedDomain);
@@ -419,13 +486,13 @@ function showConfirmDialog({ title, message, onConfirm }) {
   const modal = document.getElementById('confirm-modal');
   document.getElementById('confirm-title').textContent = title;
   document.getElementById('confirm-message').textContent = message;
-  modal.style.display = 'flex';
+  modal.hidden = false;
 
   // Replace the buttons to drop listeners from any previous invocation.
   const okBtn = replaceNode(document.getElementById('confirm-ok'));
   const cancelBtn = replaceNode(document.getElementById('confirm-cancel'));
 
-  const close = () => { modal.style.display = 'none'; };
+  const close = () => { modal.hidden = true; };
 
   okBtn.addEventListener('click', async () => {
     close();

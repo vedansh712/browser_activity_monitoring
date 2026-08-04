@@ -1,0 +1,568 @@
+/* ═══════════════════════════════════════════════════════════════════
+   TRACK DAILY — HUD THEME
+   ═══════════════════════════════════════════════════════════════════
+
+   Shared design system for the popup, dashboard and options pages.
+
+   Design rule
+   ───────────
+   HUD styling is confined to the chrome — frames, brackets, micro-labels,
+   the grid, the scanlines. The data itself stays high-contrast and calm,
+   because this is a dashboard someone opens every day and neon-on-dark is
+   fatiguing to read for long. Every glow marks something that actually
+   matters; nothing glows for decoration alone.
+
+   Theming
+   ───────
+   Only --accent is authored. Every variant is derived from it with
+   color-mix(), so the user's chosen colour re-skins all three surfaces
+   with a single custom property write. See shared/theme.js.
+
+   Fonts are system stacks only. No webfonts, because loading one would
+   mean a network request, and this extension makes none.
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Surfaces ──────────────────────────────────────────────────
+     Near-black with a cold cast rather than pure #000, which reads as
+     a hole in the screen and makes thin borders disappear. */
+  --void:        #05060a;
+  --panel:       #0a0d14;
+  --panel-lift:  #10141e;
+  --panel-high:  #161b28;
+
+  --line:        rgba(255, 255, 255, 0.07);
+  --line-bright: rgba(255, 255, 255, 0.16);
+  --grid:        rgba(255, 255, 255, 0.028);
+
+  /* ── Accent ───────────────────────────────────────────────────
+     Authored value. theme.js overwrites this from user settings. */
+  --accent: #ff2b4a;
+
+  /* Derived — never author these directly. */
+  --accent-soft:  color-mix(in srgb, var(--accent) 13%, transparent);
+  --accent-wash:  color-mix(in srgb, var(--accent) 7%,  transparent);
+  --accent-line:  color-mix(in srgb, var(--accent) 42%, transparent);
+  --accent-glow:  color-mix(in srgb, var(--accent) 55%, transparent);
+  --accent-deep:  color-mix(in srgb, var(--accent) 55%, var(--panel));
+
+  /* Foreground for text sitting on a solid accent fill. theme.js
+     recomputes this from the accent's luminance so a pale accent gets
+     dark text instead of unreadable white. */
+  --on-accent: #07070c;
+
+  /* ── Semantic colours (fixed; not user-themed) ────────────────
+     Status must not change meaning when the accent changes. */
+  --ok:   #21d4fd;
+  --warn: #ffa62b;
+  --bad:  #ff4d6a;
+
+  /* ── Text ─────────────────────────────────────────────────────
+     Data is deliberately high contrast. */
+  --ink:   #eef2f8;
+  --ink-2: #99a2b8;
+  --ink-3: #58607a;
+
+  /* ── Type ─────────────────────────────────────────────────────── */
+  --mono: ui-monospace, "Cascadia Mono", "SF Mono", "Segoe UI Mono", Consolas, monospace;
+  --sans: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+
+  /* ── Geometry ─────────────────────────────────────────────────── */
+  --cut:      14px;  /* panel corner cut */
+  --cut-sm:   7px;   /* control corner cut */
+  --bracket:  9px;   /* corner tick length */
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+}
+
+/* ═══ Base ═══════════════════════════════════════════════════════ */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--void);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  position: relative;
+}
+
+/* Ambient grid. Masked so it fades out at the edges instead of ending
+   in a hard line, and pointer-events:none so it never eats a click. */
+.hud-grid-bg::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 90% 70% at 50% 35%, #000 40%, transparent 100%);
+}
+
+/* CRT scanlines. Kept very low contrast — enough to read as a screen,
+   not enough to interfere with text. */
+.hud-scanlines::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.014) 0 1px,
+    transparent 1px 3px
+  );
+}
+
+::selection { background: var(--accent); color: var(--on-accent); }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ═══ Typography ═════════════════════════════════════════════════ */
+
+/* The workhorse of HUD typography: small, wide-tracked, uppercase mono. */
+.hud-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.19em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.hud-title {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+/* Tabular figures stop numbers jittering as they tick up. */
+.hud-num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-value {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 27px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+
+.hud-value.is-accent {
+  color: var(--accent);
+  text-shadow: 0 0 22px var(--accent-glow);
+}
+
+/* ═══ Panel ══════════════════════════════════════════════════════ */
+
+.hud-panel {
+  position: relative;
+  background: linear-gradient(180deg, var(--panel-lift), var(--panel));
+  border: 1px solid var(--line);
+  padding: var(--sp-4) 18px;
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--cut)) 0,
+    100% var(--cut),
+    100% 100%,
+    var(--cut) 100%,
+    0 calc(100% - var(--cut))
+  );
+}
+
+/* Corner registration ticks — the single cheapest signal that reads
+   as "instrument panel" rather than "card". */
+.hud-panel::before,
+.hud-panel::after {
+  content: '';
+  position: absolute;
+  width: var(--bracket);
+  height: var(--bracket);
+  pointer-events: none;
+}
+
+.hud-panel::before {
+  top: 7px;
+  left: 7px;
+  border-top: 1px solid var(--accent-line);
+  border-left: 1px solid var(--accent-line);
+}
+
+.hud-panel::after {
+  right: 7px;
+  bottom: 7px;
+  border-right: 1px solid var(--accent-line);
+  border-bottom: 1px solid var(--accent-line);
+}
+
+/* For panels whose content already reaches the corners. */
+.hud-panel.is-plain::before,
+.hud-panel.is-plain::after { display: none; }
+
+.hud-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+
+/* ═══ Buttons ════════════════════════════════════════════════════ */
+
+.hud-btn {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  padding: 9px 17px;
+  background: transparent;
+  color: var(--ink-2);
+  border: 1px solid var(--line-bright);
+  cursor: pointer;
+  transition: color .16s, border-color .16s, background .16s;
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--cut-sm)) 0,
+    100% var(--cut-sm),
+    100% 100%,
+    var(--cut-sm) 100%,
+    0 calc(100% - var(--cut-sm))
+  );
+}
+
+.hud-btn:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.hud-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* drop-shadow rather than box-shadow: it follows the clipped silhouette,
+   so the glow traces the cut corners instead of a phantom rectangle. */
+.hud-btn.is-active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  filter: drop-shadow(0 0 7px var(--accent-glow));
+}
+
+.hud-btn.is-danger {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 40%, transparent);
+  background: color-mix(in srgb, var(--bad) 9%, transparent);
+}
+
+.hud-btn.is-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bad) 18%, transparent);
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+/* ═══ Segmented control ══════════════════════════════════════════ */
+
+.hud-seg {
+  display: flex;
+  border: 1px solid var(--line-bright);
+}
+
+.hud-seg button {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  padding: 8px 15px;
+  background: transparent;
+  border: 0;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: color .14s, background .14s;
+}
+
+.hud-seg button:hover:not(.is-active) {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.hud-seg button.is-active {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
+}
+
+/* ═══ Switch ═════════════════════════════════════════════════════ */
+
+.hud-switch {
+  position: relative;
+  display: inline-block;
+  width: 42px;
+  height: 20px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.hud-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+
+.hud-switch .track {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--line-bright);
+  transition: background .2s, border-color .2s;
+  pointer-events: none;
+}
+
+.hud-switch .track::before {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  left: 3px;
+  top: 3px;
+  background: var(--ink-3);
+  transition: transform .2s, background .2s, box-shadow .2s;
+}
+
+.hud-switch input:checked + .track {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.hud-switch input:checked + .track::before {
+  transform: translateX(22px);
+  background: var(--accent);
+  box-shadow: 0 0 9px var(--accent-glow);
+}
+
+.hud-switch input:focus-visible + .track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ═══ Inputs ═════════════════════════════════════════════════════ */
+
+.hud-input,
+.hud-select {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 8px 11px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line-bright);
+  color: var(--ink);
+  transition: border-color .16s;
+}
+
+.hud-input:focus,
+.hud-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft);
+}
+
+.hud-select { background: var(--panel-lift); cursor: pointer; }
+
+.hud-input.is-narrow { width: 92px; text-align: center; }
+
+/* ═══ Chips ══════════════════════════════════════════════════════ */
+
+.hud-chip {
+  display: inline-block;
+  padding: 2.5px 8px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border: 1px solid var(--line-bright);
+  color: var(--ink-2);
+  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 5px 100%, 0 calc(100% - 5px));
+}
+
+/* ═══ Tables ═════════════════════════════════════════════════════ */
+
+.hud-table { width: 100%; border-collapse: collapse; }
+
+.hud-table th {
+  text-align: left;
+  padding: 8px 10px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.hud-table th.sortable { cursor: pointer; user-select: none; }
+.hud-table th.sortable:hover { color: var(--ink-2); }
+.hud-table th.active { color: var(--accent); }
+.hud-table th.sortable[data-dir="asc"]::after  { content: " \25B2"; font-size: 8px; }
+.hud-table th.sortable[data-dir="desc"]::after { content: " \25BC"; font-size: 8px; }
+
+.hud-table td {
+  padding: 11px 10px;
+  font-size: 13px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.035);
+}
+
+.hud-table tbody tr { transition: background .14s; }
+.hud-table tbody tr:hover { background: var(--accent-wash); }
+
+/* ═══ Progress track ═════════════════════════════════════════════ */
+
+.hud-track {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  position: relative;
+  overflow: hidden;
+}
+
+.hud-track > .fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  transition: width .3s ease;
+}
+
+/* Bright leading edge — reads as a live readout rather than a static bar. */
+.hud-track > .fill::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #fff;
+  opacity: .75;
+}
+
+/* ═══ Status dot ═════════════════════════════════════════════════ */
+
+.hud-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  animation: hud-ping 2.4s ease-out infinite;
+}
+
+.hud-dot.is-idle    { background: var(--warn); animation: none; }
+.hud-dot.is-off     { background: var(--ink-3); animation: none; }
+
+@keyframes hud-ping {
+  0%   { box-shadow: 0 0 0 0 var(--accent-glow); }
+  70%  { box-shadow: 0 0 0 7px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* ═══ Empty state ════════════════════════════════════════════════ */
+
+.hud-empty {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--ink-3);
+  text-align: center;
+  padding: var(--sp-5);
+}
+
+/* ═══ Modal ══════════════════════════════════════════════════════ */
+
+.hud-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 3, 6, 0.72);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.hud-modal-backdrop[hidden] { display: none; }
+
+.hud-modal {
+  background: linear-gradient(180deg, var(--panel-high), var(--panel));
+  border: 1px solid var(--line-bright);
+  padding: var(--sp-5);
+  width: min(480px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  clip-path: polygon(
+    0 0, calc(100% - 18px) 0, 100% 18px,
+    100% 100%, 18px 100%, 0 calc(100% - 18px)
+  );
+}
+
+.hud-modal h3 {
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: var(--sp-2);
+}
+
+.hud-modal p {
+  font-size: 13px;
+  color: var(--ink-2);
+  line-height: 1.6;
+  margin-bottom: var(--sp-4);
+  /* Confirmation copy is set via textContent and contains newlines. */
+  white-space: pre-line;
+}
+
+.hud-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-top: var(--sp-4);
+}
+
+/* ═══ Scrollbars ═════════════════════════════════════════════════ */
+
+* { scrollbar-width: thin; scrollbar-color: var(--line-bright) transparent; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line-bright); }
+::-webkit-scrollbar-thumb:hover { background: var(--accent-line); }
+
+/* ═══ Motion ═════════════════════════════════════════════════════
+   Scanlines and pulses are decoration; anyone who has asked the OS to
+   reduce motion should not have to watch them. */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .hud-scanlines::after { display: none; }
+}

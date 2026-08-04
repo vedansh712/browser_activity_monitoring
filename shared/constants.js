@@ -48,6 +48,28 @@ export const MAX_TRACKED_INTERVAL_MS = FLUSH_INTERVAL_MINUTES * 2 * 60 * 1000;
 // chrome.idle rejects intervals below 15s.
 export const MIN_IDLE_THRESHOLD_SECONDS = 15;
 
+/**
+ * Accent colour.
+ *
+ * The entire theme derives from this one value, so it is safe to let the user
+ * pick anything. theme.js recomputes the foreground used on solid accent fills
+ * from the chosen colour's luminance, so a pale accent still gets readable text.
+ */
+export const DEFAULT_ACCENT = '#ff2b4a';
+
+/** Curated starting points; the picker also allows any colour. */
+export const ACCENT_PRESETS = Object.freeze([
+  { name: 'Crimson', value: '#ff2b4a' },
+  { name: 'Ember',   value: '#ff6a2b' },
+  { name: 'Amber',   value: '#ffb02b' },
+  { name: 'Acid',    value: '#a6ff2b' },
+  { name: 'Mint',    value: '#2bffa8' },
+  { name: 'Ice',     value: '#21d4fd' },
+  { name: 'Azure',   value: '#2b7bff' },
+  { name: 'Violet',  value: '#8b5cff' },
+  { name: 'Magenta', value: '#ff2bd4' },
+]);
+
 // Default log threshold. 'warn' keeps normal operation silent so that anything
 // reaching the console is genuinely actionable; users can raise it in settings.
 export const LOG_LEVEL = 'warn';
@@ -77,6 +99,37 @@ export const AI_STATUS = Object.freeze({
   DOWNLOADABLE: 'downloadable',
   DOWNLOADING: 'downloading',
   AVAILABLE: 'available',
+});
+
+/**
+ * Focus score tuning.
+ *
+ * The score measures how *concentrated* attention was — deliberately not how
+ * "productive" it was. Judging categories as good or bad would bake one
+ * person's value judgement into everyone's dashboard; whether three hours of
+ * YouTube is well spent is not the extension's call to make.
+ */
+export const FOCUS = Object.freeze({
+  // Consecutive visits to one site closer together than this are one block.
+  // Bridges the gaps created by flushing a live session every few minutes.
+  BLOCK_GAP_MS: 5 * 60 * 1000,
+
+  // A block at least this long counts as sustained attention.
+  DEEP_BLOCK_MS: 15 * 60 * 1000,
+
+  // Switching this often is treated as maximum thrash — the penalty saturates.
+  MAX_SWITCHES_PER_HOUR: 30,
+
+  // Below this much tracked time the score is statistically meaningless, so it
+  // is reported as null rather than as a number nobody should read into.
+  MIN_SAMPLE_MS: 10 * 60 * 1000,
+
+  // Must sum to 1.
+  WEIGHTS: Object.freeze({
+    deepWork: 0.45,
+    lowSwitching: 0.35,
+    concentration: 0.20,
+  }),
 });
 
 // How many trailing days the periodic refresh re-derives. Two covers the common
@@ -383,6 +436,7 @@ export const DEFAULT_SETTINGS = {
   excludedDomains: [],
   retentionDays: DEFAULT_RETENTION_DAYS,
   youtubeDeepTracking: true,
+  accentColor: DEFAULT_ACCENT,
   // Off by default. Classification is on-device, but it is still inference over
   // the user's browsing data and must be an explicit choice.
   aiEnabled: false,
