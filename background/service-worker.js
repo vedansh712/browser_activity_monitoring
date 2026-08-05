@@ -112,17 +112,49 @@ chrome.storage.onChanged.addListener((changes, area) => {
   updateActionIcon();
 });
 
+/**
+ * Alarms this worker depends on.
+ *
+ * Established on every worker evaluation, not only on install. Reloading an
+ * unpacked extension does not reliably fire onInstalled or onStartup, so an
+ * alarm created only inside init() is never created at all for an existing
+ * install — which is exactly how the heartbeat silently failed to exist while
+ * the older flush alarm, created by a previous version, carried on working and
+ * made everything look healthy.
+ */
+const REQUIRED_ALARMS = [
+  { name: ALARMS.FLUSH_SESSION, periodInMinutes: FLUSH_INTERVAL_MINUTES },
+  { name: ALARMS.TICK, periodInMinutes: TICK_INTERVAL_MINUTES },
+];
+
+/**
+ * Create any missing alarm, leaving healthy ones alone.
+ *
+ * Recreating an existing alarm resets its schedule, so doing that on every
+ * worker start would let a frequently-restarting worker postpone it forever.
+ * Existing alarms are only replaced when their period no longer matches.
+ */
+async function ensureAlarms() {
+  for (const spec of REQUIRED_ALARMS) {
+    try {
+      const existing = await chrome.alarms.get(spec.name);
+      if (!existing || existing.periodInMinutes !== spec.periodInMinutes) {
+        chrome.alarms.create(spec.name, { periodInMinutes: spec.periodInMinutes });
+        log.info(`Alarm '${spec.name}' created (every ${spec.periodInMinutes}m)`);
+      }
+    } catch (err) {
+      log.error(`Could not establish alarm '${spec.name}':`, err);
+    }
+  }
+}
+
+// Top level: runs on install, on startup, and on every worker wake-up.
+ensureAlarms();
+updateActionIcon();
+
 async function init() {
   await storage.initStorage();
-
-  // Periodic flush to IndexedDB, and the heartbeat that accrues time.
-  chrome.alarms.create(ALARMS.FLUSH_SESSION, {
-    periodInMinutes: FLUSH_INTERVAL_MINUTES,
-  });
-  chrome.alarms.create(ALARMS.TICK, {
-    periodInMinutes: TICK_INTERVAL_MINUTES,
-  });
-
+  await ensureAlarms();
   await applyIdleThresholdFromSettings();
 
   // Start tracking the currently active tab
@@ -134,6 +166,8 @@ async function init() {
   } catch (err) {
     log.warn('Could not get active tab on init:', err.message);
   }
+
+  await updateActionIcon();
 }
 
 // ─── Tab Events ────────────────────────────────────────────────────

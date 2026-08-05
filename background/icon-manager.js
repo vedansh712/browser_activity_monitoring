@@ -53,7 +53,10 @@ export async function refreshActionIcon({ totalMs, settings, paused = false }) {
     for (const size of ICON_SIZES) {
       const canvas = new OffscreenCanvas(size, size);
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) return;
+      if (!ctx) {
+        log.warn(`No 2D context available at ${size}px — icon left unchanged`);
+        return;
+      }
 
       drawIcon(ctx, { size, progress, color, paused });
       imageData[size] = ctx.getImageData(0, 0, size, size);
@@ -61,6 +64,8 @@ export async function refreshActionIcon({ totalMs, settings, paused = false }) {
 
     await chrome.action.setIcon({ imageData });
     lastRenderKey = renderKey;
+
+    log.info(`Icon repainted: ${Math.round(progress * 100)}% ${color}${paused ? ' (paused)' : ''}`);
   } catch (err) {
     // A failed icon update must never disrupt tracking — it is decoration.
     log.warn('Could not update toolbar icon:', err?.message ?? err);
