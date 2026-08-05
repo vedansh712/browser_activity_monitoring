@@ -8,10 +8,54 @@
   // scripts are not loaded as ES modules, so the value cannot be imported.
   const MEDIA_REFRESH_MS = 5000;
 
+  /*
+   * Orphaned-script guard
+   * ─────────────────────
+   * Reloading or updating the extension severs this script's link to it, but
+   * the page keeps running the script. Every chrome.* call then throws
+   * *synchronously* — it does not return a rejected promise — so wrapping the
+   * call in .catch() does not help, which is why these surfaced as uncaught
+   * errors on unrelated pages.
+   *
+   * Once orphaned the script can never recover, so it tears down its timers and
+   * observers and goes silent instead of throwing on every poll.
+   *
+   * Duplicated in youtube.js: manifest content scripts are not ES modules, so
+   * there is nothing to import from.
+   */
+  let alive = true;
+  const teardown = [];
+
+  function extensionGone(error) {
+    return !alive || /context invalidated|Receiving end does not exist/i.test(
+      String(error?.message ?? error ?? '')
+    );
+  }
+
+  function shutdown() {
+    if (!alive) return;
+    alive = false;
+    for (const stop of teardown) {
+      try { stop(); } catch { /* already gone */ }
+    }
+  }
+
   function send(type, data) {
-    chrome.runtime.sendMessage({ type, data }).catch(() => {
-      // Extension context may be invalidated during reload; nothing to do.
-    });
+    if (!alive) return;
+
+    // chrome.runtime.id reads as undefined once the context is invalidated,
+    // which catches the common case before anything can throw.
+    try {
+      if (!chrome.runtime?.id) return shutdown();
+      const pending = chrome.runtime.sendMessage({ type, data });
+      if (pending?.catch) {
+        pending.catch((err) => {
+          if (extensionGone(err)) shutdown();
+        });
+      }
+    } catch (err) {
+      if (extensionGone(err)) shutdown();
+    }
   }
 
   // ─── Page info ──────────────────────────────────────────────────────
@@ -57,7 +101,17 @@
     return false;
   }
 
+  function stopRefresh() {
+    if (refreshTimer) {
+      clearInterval(refreshTimer);
+      refreshTimer = null;
+    }
+  }
+  teardown.push(stopRefresh);
+
   function reportMedia(force = false) {
+    if (!alive) return stopRefresh();
+
     const playing = isMediaPlaying();
 
     // Re-send while playing to keep the signal alive; send a stop exactly once.
@@ -68,9 +122,8 @@
 
     if (playing && !refreshTimer) {
       refreshTimer = setInterval(() => reportMedia(), MEDIA_REFRESH_MS);
-    } else if (!playing && refreshTimer) {
-      clearInterval(refreshTimer);
-      refreshTimer = null;
+    } else if (!playing) {
+      stopRefresh();
     }
   }
 
@@ -83,11 +136,9 @@
   // A hidden tab cannot be the tracked tab; stop asserting playback for it so
   // background audio in another tab does not hold idle detection open.
   document.addEventListener('visibilitychange', () => {
+    if (!alive) return;
     if (document.hidden) {
-      if (refreshTimer) {
-        clearInterval(refreshTimer);
-        refreshTimer = null;
-      }
+      stopRefresh();
       send('MEDIA_STATE', { playing: false });
       lastReported = false;
     } else {
@@ -120,5 +171,6 @@
   const titleEl = document.querySelector('title');
   if (titleEl) {
     titleObserver.observe(titleEl, { childList: true, characterData: true, subtree: true });
+    teardown.push(() => titleObserver.disconnect());
   }
 })();

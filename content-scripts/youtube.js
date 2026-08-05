@@ -19,19 +19,69 @@
   let deepTrackingEnabled = true;
   let debugEnabled = false;
 
+  /*
+   * Orphaned-script guard
+   * ─────────────────────
+   * Reloading the extension severs this script's link to it while the page
+   * keeps running it. chrome.* calls then throw *synchronously*, so .catch()
+   * never sees them — and this script polls every five seconds, so an orphan
+   * would throw indefinitely. Once orphaned it stops its timers and observers
+   * and goes quiet.
+   *
+   * Duplicated from generic.js because manifest content scripts are not ES
+   * modules and have nothing to import from.
+   */
+  let alive = true;
+  const teardown = [];
+
+  function extensionGone(error) {
+    return !alive || /context invalidated|Receiving end does not exist/i.test(
+      String(error?.message ?? error ?? '')
+    );
+  }
+
+  function shutdown() {
+    if (!alive) return;
+    alive = false;
+    for (const stop of teardown) {
+      try { stop(); } catch { /* already gone */ }
+    }
+  }
+
+  /** Send to the service worker, surviving an invalidated context. */
+  function sendToWorker(message) {
+    if (!alive) return;
+    try {
+      if (!chrome.runtime?.id) return shutdown();
+      const pending = chrome.runtime.sendMessage(message);
+      if (pending?.catch) {
+        pending.catch((err) => {
+          if (extensionGone(err)) shutdown();
+        });
+      }
+    } catch (err) {
+      if (extensionGone(err)) shutdown();
+    }
+  }
+
   function applySettings(settings) {
     if (!settings) return;
     deepTrackingEnabled = settings.youtubeDeepTracking !== false;
     debugEnabled = settings.logLevel === 'debug';
   }
 
-  chrome.storage.local.get('settings')
-    .then((stored) => applySettings(stored.settings))
-    .catch(() => { /* extension context may be gone */ });
+  try {
+    chrome.storage.local.get('settings')
+      .then((stored) => applySettings(stored.settings))
+      .catch(() => { /* extension context may be gone */ });
 
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes.settings) applySettings(changes.settings.newValue);
-  });
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (!alive) return;
+      if (area === 'local' && changes.settings) applySettings(changes.settings.newValue);
+    });
+  } catch {
+    shutdown();
+  }
 
   /**
    * Verbose logging, silent unless the user raises the log level.
@@ -188,9 +238,7 @@
       duration: meta.videoDuration,
     });
 
-    chrome.runtime.sendMessage({ type: 'YOUTUBE_META', data: meta }).catch((err) => {
-      console.warn(TAG, 'sendMessage error:', err?.message);
-    });
+    sendToWorker({ type: 'YOUTUBE_META', data: meta });
   }
 
   // ─── DOM helpers ────────────────────────────────────────────────────
@@ -259,6 +307,7 @@
   // ─── Listen for re-request messages from service worker ─────────────
 
   chrome.runtime.onMessage.addListener((message) => {
+    if (!alive) return;
     if (message?.type === 'REREQUEST_YT_META') {
       debug('Re-extraction requested by service worker');
       // Reset dedup so we re-send
@@ -299,6 +348,7 @@
   // URL change observer (catch-all). Only fires when videoId actually changes
   // to avoid triggering on notification-count updates in document.title.
   const urlObserver = new MutationObserver(() => {
+    if (!alive) return;
     if (location.href !== lastUrl) {
       const newVid = getVideoId();
       const oldVid = currentVideoId;
@@ -330,6 +380,8 @@
   // ─── Theater / Fullscreen detection ─────────────────────────────────
 
   function checkTheaterFullscreen() {
+    if (!alive) return;
+
     const watchFlexy = document.querySelector('ytd-watch-flexy');
     const isTheater = watchFlexy ? watchFlexy.hasAttribute('theater') : false;
     const isFullscreenAttr = watchFlexy ? watchFlexy.hasAttribute('fullscreen') : false;
@@ -346,16 +398,20 @@
           '| theater:', isTheater, '| fullscreen:', isFullscreenAttr || isFullscreenAPI);
       }
       lastTheaterOrFull = isExpanded;
-      chrome.runtime.sendMessage({
+      sendToWorker({
         type: 'YOUTUBE_THEATER',
         data: { isExpanded, isTheater, isFullscreen: isFullscreenAttr || isFullscreenAPI },
-      }).catch(() => {});
+      });
     }
   }
 
   const bodyObserver = new MutationObserver(checkTheaterFullscreen);
 
   function startTheaterObserver() {
+    // Without this, the retry below recurses forever in an orphaned script
+    // whose page never had a player.
+    if (!alive) return;
+
     const watchFlexy = document.querySelector('ytd-watch-flexy');
     if (watchFlexy) {
       bodyObserver.observe(watchFlexy, {
@@ -370,5 +426,11 @@
   startTheaterObserver();
 
   document.addEventListener('fullscreenchange', checkTheaterFullscreen);
-  setInterval(checkTheaterFullscreen, 5000);
+
+  // Registered for teardown: an orphaned script polling every five seconds is
+  // what turns one reload into an endless stream of console errors.
+  const theaterPoll = setInterval(checkTheaterFullscreen, 5000);
+  teardown.push(() => clearInterval(theaterPoll));
+  teardown.push(() => urlObserver.disconnect());
+  teardown.push(() => bodyObserver.disconnect());
 })();
