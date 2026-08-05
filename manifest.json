@@ -27,13 +27,13 @@
 
   "content_scripts": [
     {
-      "matches": ["*://*.youtube.com/watch*", "*://*.youtube.com/shorts/*"],
+      "matches": ["*://*.youtube.com/*"],
       "js": ["content-scripts/youtube-injected.js"],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
-      "matches": ["*://*.youtube.com/watch*", "*://*.youtube.com/shorts/*"],
+      "matches": ["*://*.youtube.com/*"],
       "js": ["content-scripts/youtube.js"],
       "run_at": "document_idle"
     },

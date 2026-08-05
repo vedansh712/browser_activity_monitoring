@@ -1,4 +1,14 @@
-// YouTube content script — runs in ISOLATED world.
+// YouTube content script — runs in ISOLATED world on ALL of youtube.com.
+//
+// Injected site-wide rather than only on /watch, because content scripts are
+// injected on document navigation and never on pushState. YouTube is a
+// single-page app, so opening the homepage and clicking a video — the normal
+// way viewing starts — changes the URL without a document load and would leave
+// a watch-only match never injected at all. Time would still be tracked by the
+// service worker while no script existed to read the title, producing sessions
+// with no metadata.
+//
+// This script therefore detects watch pages itself and stays inert elsewhere.
 // Receives video metadata from the MAIN-world injected script (youtube-injected.js)
 // via window.postMessage, then forwards to the service worker.
 //
@@ -340,6 +350,12 @@
     setTimeout(requestExtraction, 1200);
     // Scheduled DOM-only attempt as backup (only uses current DOM, no stale pageData)
     setTimeout(() => processAndSend(null), 2800);
+
+    // Reattach to the player. Arriving at a video from the homepage or search
+    // is the normal way viewing starts, and the player does not exist until
+    // that navigation happens.
+    clearTimeout(theaterAttachTimer);
+    startTheaterObserver();
   }
 
   document.addEventListener('yt-navigate-finish', onNavigate);
@@ -407,9 +423,14 @@
 
   const bodyObserver = new MutationObserver(checkTheaterFullscreen);
 
-  function startTheaterObserver() {
-    // Without this, the retry below recurses forever in an orphaned script
-    // whose page never had a player.
+  // Now that the script loads on all of YouTube, most pages it runs on have no
+  // player at all. Retrying forever would leave a one-second timer running on
+  // the homepage indefinitely, so the search is bounded and simply restarts on
+  // the next navigation.
+  const THEATER_ATTACH_ATTEMPTS = 10;
+  let theaterAttachTimer = null;
+
+  function startTheaterObserver(attempt = 0) {
     if (!alive) return;
 
     const watchFlexy = document.querySelector('ytd-watch-flexy');
@@ -419,10 +440,15 @@
         attributeFilter: ['theater', 'fullscreen'],
       });
       checkTheaterFullscreen();
-    } else {
-      setTimeout(startTheaterObserver, 1000);
+      return;
+    }
+
+    if (attempt < THEATER_ATTACH_ATTEMPTS) {
+      theaterAttachTimer = setTimeout(() => startTheaterObserver(attempt + 1), 1000);
     }
   }
+
+  teardown.push(() => clearTimeout(theaterAttachTimer));
   startTheaterObserver();
 
   document.addEventListener('fullscreenchange', checkTheaterFullscreen);
