@@ -12,7 +12,7 @@ Everything runs and stays on your machine. The extension makes **no network requ
 - **Dashboard** — daily / weekly / monthly views, hourly activity heatmap, sortable domain table, CSV export
 - **Focus score** — how concentrated your attention was, from time in sustained blocks, how often you switched, and how widely you spread
 - **Custom categories** — create your own, with colours and domain rules
-- **Themeable HUD interface** — pick any accent colour, or let it shift from green through cyan to blue as your tracked time builds through the day
+- **Themeable HUD interface** — pick any accent colour, or let it sweep from green through blue and pink to red as your tracked time builds through the day
 
 ## Install (development)
 

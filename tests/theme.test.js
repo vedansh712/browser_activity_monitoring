@@ -18,6 +18,7 @@ import {
   ACCENT_PRESETS,
   ACCENT_MODES,
   ACCENT_GRADIENT,
+  ACCENT_GRADIENT_STOPS,
 } from '../shared/constants.js';
 
 const HOUR = 60 * 60 * 1000;
@@ -165,18 +166,54 @@ test('hslToHex always produces a parseable colour', () => {
 
 // ─── Dynamic gradient ──────────────────────────────────────────────
 
-test('the ramp runs from green to blue', () => {
+test('the ramp runs from green to red', () => {
   const start = parseHexColor(accentForProgress(0));
   const end = parseHexColor(accentForProgress(1));
 
-  assert.ok(start.g > start.b, 'start should be green-dominant');
-  assert.ok(end.b > end.g, 'end should be blue-dominant');
+  assert.ok(start.g > start.r && start.g > start.b, 'start should be green-dominant');
+  assert.ok(end.r > end.g && end.r > end.b, 'end should be red-dominant');
 });
 
-test('the ramp passes through cyan rather than jumping', () => {
-  // Midway between hue 140 and 220 is 180 — cyan, where green and blue match.
-  const mid = parseHexColor(accentForProgress(0.5));
-  assert.ok(Math.abs(mid.g - mid.b) < 30, `midpoint should be cyan-ish, got ${JSON.stringify(mid)}`);
+test('the ramp passes through cyan, blue and pink on the way', () => {
+  // The requested ordering: green -> blue -> pink -> red. Fractions are derived
+  // from the configured endpoints so this test follows them if they move.
+  const at = (hue) =>
+    parseHexColor(accentForProgress(
+      (hue - ACCENT_GRADIENT.fromHue) / (ACCENT_GRADIENT.toHue - ACCENT_GRADIENT.fromHue)
+    ));
+
+  const cyan = at(180);
+  assert.ok(Math.abs(cyan.g - cyan.b) < 30 && cyan.r < cyan.g, 'cyan: green and blue together, red low');
+
+  const blue = at(220);
+  assert.ok(blue.b > blue.g && blue.b > blue.r, 'blue should be blue-dominant');
+
+  const pink = at(310);
+  assert.ok(pink.r > pink.g && pink.b > pink.g, 'pink: red and blue high, green low');
+});
+
+test('hue advances monotonically along the ramp', () => {
+  // Guards the ordering itself: if the sweep ever reversed or wrapped early,
+  // the sequence the user asked for would silently change.
+  const hueOf = ({ r, g, b }) => {
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    if (max === min) return 0;
+    const d = max - min;
+    let h;
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    return ((h * 60) + 360) % 360;
+  };
+
+  // Sample below the 360 wrap so the final value doesn't fold back to 0.
+  let previous = hueOf(parseHexColor(accentForProgress(0)));
+  for (let i = 1; i <= 40; i++) {
+    const current = hueOf(parseHexColor(accentForProgress((i / 40) * 0.98)));
+    assert.ok(current >= previous - 1, `hue went backwards at step ${i}: ${previous} -> ${current}`);
+    previous = current;
+  }
 });
 
 test('the ramp is continuous with no sudden jumps', () => {
@@ -272,5 +309,17 @@ test('gradient endpoints are configured, not hardcoded in the function', () => {
   assert.equal(accentForProgress(0, custom), hslToHex(0, 100, 50));
   assert.equal(accentForProgress(1, custom), hslToHex(60, 100, 50));
   assert.equal(ACCENT_GRADIENT.fromHue, 140);
+  assert.equal(ACCENT_GRADIENT.toHue, 360);
+});
+
+test('the declared stops lie within the configured range and are ordered', () => {
+  // The preview bar is painted from these, so they must not drift from the
+  // endpoints the interpolation actually uses.
+  const hues = ACCENT_GRADIENT_STOPS.map((s) => s.hue);
+  assert.equal(hues[0], ACCENT_GRADIENT.fromHue);
+  assert.equal(hues[hues.length - 1], ACCENT_GRADIENT.toHue);
+  for (let i = 1; i < hues.length; i++) {
+    assert.ok(hues[i] > hues[i - 1], `stop ${i} is out of order`);
+  }
 });
 

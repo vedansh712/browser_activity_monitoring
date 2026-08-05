@@ -20,6 +20,7 @@ import {
   normalizeAccent,
   accentForDuration,
   fetchTodayTotalMs,
+  gradientCss,
 } from '../shared/theme.js';
 import { createLogger } from '../shared/logger.js';
 import * as storage from '../background/storage-manager.js';
@@ -152,6 +153,9 @@ async function renderDynamicPreview() {
     document.getElementById('accent-span').value ?? settings.accentSpanHours,
     ACCENT_SPAN_LIMITS
   );
+
+  // Painted from the shared stops so the preview cannot drift from the ramp.
+  document.getElementById('gradient-bar').style.background = gradientCss();
 
   document.getElementById('gradient-mid').textContent = `${(span / 2).toFixed(span % 2 ? 1 : 0)}h`;
   document.getElementById('gradient-end').textContent = `${span}h+`;

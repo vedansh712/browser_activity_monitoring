@@ -3,6 +3,7 @@ import {
   STORAGE_KEYS,
   ACCENT_MODES,
   ACCENT_GRADIENT,
+  ACCENT_GRADIENT_STOPS,
   ACCENT_SPAN_LIMITS,
   MSG,
 } from './constants.js';
@@ -139,6 +140,26 @@ export function hslToHex(h, s, l) {
 function clamp(value, min, max) {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * A CSS `linear-gradient(...)` reproducing the ramp.
+ *
+ * Generated from the same stops the interpolation uses, so the preview swatch
+ * in options is painted from one source of truth rather than a hand-maintained
+ * copy that could drift when the endpoints change.
+ *
+ * @param {Array<{hue: number}>} [stops]
+ * @param {Object} [gradient]
+ * @returns {string}
+ */
+export function gradientCss(stops = ACCENT_GRADIENT_STOPS, gradient = ACCENT_GRADIENT) {
+  const span = gradient.toHue - gradient.fromHue;
+  const parts = stops.map((stop) => {
+    const position = span === 0 ? 0 : ((stop.hue - gradient.fromHue) / span) * 100;
+    return `${hslToHex(stop.hue, gradient.saturation, gradient.lightness)} ${position.toFixed(1)}%`;
+  });
+  return `linear-gradient(90deg, ${parts.join(', ')})`;
 }
 
 /**

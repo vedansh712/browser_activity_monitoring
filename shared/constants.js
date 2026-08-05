@@ -70,17 +70,35 @@ export const ACCENT_MODES = Object.freeze({ FIXED: 'fixed', DYNAMIC: 'dynamic' }
 /**
  * Endpoints of the dynamic gradient, in HSL.
  *
- * Interpolating hue from 140° to 220° passes through spring green, teal and
- * cyan on the way to azure — a continuous ramp rather than a jump between two
- * colours. Saturation and lightness are held constant so only hue changes,
- * which keeps every step equally readable against the dark surfaces.
+ * Sweeping hue from 140° to 360° walks the long way round the colour wheel:
+ * green → cyan → blue → violet → pink → red. That ordering carries meaning as
+ * well as variety, since green reads as "barely started" and red as "you have
+ * been at this all day".
+ *
+ * Saturation and lightness are held constant so only hue changes, which keeps
+ * every step equally readable against the dark surfaces — the interface shifts
+ * in colour without appearing to brighten or fade.
  */
 export const ACCENT_GRADIENT = Object.freeze({
   fromHue: 140,
-  toHue: 220,
+  toHue: 360,
   saturation: 88,
   lightness: 58,
 });
+
+/**
+ * Named waypoints along the ramp, used to paint the preview and to pin the
+ * expected ordering in tests. Fractions are derived, never hardcoded, so they
+ * stay correct if the endpoints move.
+ */
+export const ACCENT_GRADIENT_STOPS = Object.freeze([
+  { name: 'Green', hue: 140 },
+  { name: 'Cyan',  hue: 180 },
+  { name: 'Blue',  hue: 220 },
+  { name: 'Violet', hue: 270 },
+  { name: 'Pink',  hue: 310 },
+  { name: 'Red',   hue: 360 },
+]);
 
 /** Tracked hours at which the dynamic accent reaches the far end of the ramp. */
 export const DEFAULT_ACCENT_SPAN_HOURS = 8;

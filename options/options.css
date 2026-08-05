@@ -323,19 +323,10 @@ body { min-height: 100vh; }
 
 .gradient-preview { margin: var(--sp-4) 0 var(--sp-2); position: relative; }
 
-/* The bar is painted from the same HSL endpoints the JS interpolates
-   between, so the preview cannot drift from the real ramp. */
-.gradient-bar {
-  height: 10px;
-  background: linear-gradient(
-    90deg,
-    hsl(140, 88%, 58%),
-    hsl(160, 88%, 58%),
-    hsl(180, 88%, 58%),
-    hsl(200, 88%, 58%),
-    hsl(220, 88%, 58%)
-  );
-}
+/* The gradient itself is generated in JS from ACCENT_GRADIENT_STOPS and set
+   inline, so the preview is painted from the same constants the interpolation
+   uses and cannot drift from the real ramp. */
+.gradient-bar { height: 10px; }
 
 /* Where today's tracked time currently sits on the ramp. */
 .gradient-marker {
