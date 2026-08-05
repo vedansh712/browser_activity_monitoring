@@ -22,6 +22,7 @@ import {
   fetchTodayTotalMs,
   gradientCss,
 } from '../shared/theme.js';
+import { drawIcon, iconColorForProgress } from '../shared/icon-renderer.js';
 import { createLogger } from '../shared/logger.js';
 import * as storage from '../background/storage-manager.js';
 import { aiClassifier } from '../background/container.js';
@@ -125,6 +126,7 @@ function renderAccent() {
     settings.accentSpanHours ?? ACCENT_SPAN_LIMITS.fallback;
 
   if (isDynamic) renderDynamicPreview();
+  renderIconPreview();
 
   const current = normalizeAccent(settings.accentColor ?? DEFAULT_ACCENT);
 
@@ -142,6 +144,38 @@ function renderAccent() {
   `)}`);
 
   bindAll(container, '.preset', 'click', (btn) => selectAccent(btn.dataset.color, true));
+}
+
+/**
+ * Preview of the toolbar icon across the day.
+ *
+ * Rendered with the same routine the service worker uses, so what is shown
+ * here is exactly what lands in the toolbar rather than an illustration of it
+ * that could drift.
+ */
+function renderIconPreview() {
+  const strip = document.getElementById('icon-strip');
+  const isDynamic = settings.accentMode === ACCENT_MODES.DYNAMIC;
+  const span = clampInt(settings.accentSpanHours, ACCENT_SPAN_LIMITS);
+  const fixed = normalizeAccent(settings.accentColor ?? DEFAULT_ACCENT);
+
+  const steps = [0.05, 0.25, 0.5, 0.75, 1];
+
+  render(strip, html`${steps.map((fraction) => html`
+    <div class="icon-step">
+      <canvas width="64" height="64" data-fraction="${fraction}"></canvas>
+      <span class="hud-label">${formatDuration(fraction * span * 3600000)}</span>
+    </div>
+  `)}`);
+
+  for (const canvas of strip.querySelectorAll('canvas')) {
+    const fraction = Number(canvas.dataset.fraction);
+    drawIcon(canvas.getContext('2d'), {
+      size: canvas.width,
+      progress: fraction,
+      color: isDynamic ? iconColorForProgress(fraction) : fixed,
+    });
+  }
 }
 
 /**
@@ -193,6 +227,7 @@ async function selectAccent(value, rerender = false) {
     else {
       document.getElementById('accent-color').value = colour;
       markActivePreset(colour);
+      renderIconPreview();
     }
   });
 }

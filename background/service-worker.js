@@ -6,12 +6,14 @@ import {
   TRACKING_STATES,
   STORAGE_KEYS,
 } from '../shared/constants.js';
-import { extractDomain } from '../shared/utils.js';
+import { extractDomain, todayKey } from '../shared/utils.js';
+import { sessionElapsed } from '../shared/data-models.js';
 import { createLogger, setLogLevel } from '../shared/logger.js';
 import * as storage from './storage-manager.js';
 import * as tracker from './tracker.js';
 import { aggregateService } from './container.js';
 import { registerIdleListener, applyIdleThreshold } from './idle-manager.js';
+import { refreshActionIcon } from './icon-manager.js';
 import { classifyPage } from './category-engine.js';
 import { handleMessage, addUncategorized, tryAIClassification } from './message-router.js';
 
@@ -106,6 +108,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (typeof next.logLevel === 'string') {
     setLogLevel(next.logLevel);
   }
+  // Repaint immediately so a colour change is visible without waiting a tick.
+  updateActionIcon();
 });
 
 async function init() {
@@ -252,6 +256,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     } catch (err) {
       log.error('Heartbeat failed:', err);
     }
+
+    await updateActionIcon();
     return;
   }
 
@@ -439,6 +445,33 @@ async function handleUserActive() {
   if (state === TRACKING_STATES.IDLE) {
     await tracker.resumeCurrentSession();
     await storage.setTrackingState(TRACKING_STATES.ACTIVE);
+  }
+}
+
+/**
+ * Repaint the toolbar icon from today's total.
+ *
+ * Called from the heartbeat and whenever settings change, so the icon reflects
+ * both accumulating time and a change of accent without waiting a full minute.
+ */
+async function updateActionIcon() {
+  try {
+    const [settings, aggregate, current] = await Promise.all([
+      storage.getSettings(),
+      aggregateService.getForDate(todayKey()),
+      storage.getCurrentSession(),
+    ]);
+
+    let totalMs = aggregate?.totalTime ?? 0;
+    if (current?.isActive) totalMs += sessionElapsed(current);
+
+    await refreshActionIcon({
+      totalMs,
+      settings,
+      paused: !settings.trackingEnabled,
+    });
+  } catch (err) {
+    log.warn('Could not refresh toolbar icon:', err?.message ?? err);
   }
 }
 

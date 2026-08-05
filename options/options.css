@@ -362,3 +362,37 @@ body { min-height: 100vh; }
   background: rgba(255, 255, 255, 0.02);
   border-left: 2px solid var(--accent);
 }
+
+/* ═══ Toolbar icon preview ══════════════════════════════════════ */
+
+.icon-preview {
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-4);
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.setting-hint {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  margin: 5px 0 var(--sp-3);
+  line-height: 1.5;
+}
+
+.icon-strip {
+  display: flex;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+.icon-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.icon-step canvas {
+  width: 48px;
+  height: 48px;
+  image-rendering: auto;
+}
