@@ -185,6 +185,10 @@ body { min-height: 100vh; }
   justify-content: center;
 }
 
+/* .chart-wrap sets display:flex, which beats the browser's [hidden] rule —
+   without this the hidden chart keeps holding its 210px and leaves a gap. */
+.chart-wrap[hidden] { display: none; }
+
 .chart-wrap > canvas { width: 100% !important; max-height: 210px; }
 .chart-wrap > canvas[hidden] { display: none; }
 .hud-empty[hidden] { display: none; }
@@ -416,31 +420,40 @@ body { min-height: 100vh; }
 .timeline {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
+  gap: var(--sp-3);
   padding-top: var(--sp-2);
+  flex: 1;
 }
 
 .timeline[hidden] { display: none; }
 
 .timeline-track {
   position: relative;
-  height: 92px;
+  flex: 1;
+  min-height: 190px;
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid var(--line);
   overflow: hidden;
+  cursor: zoom-in;
 }
 
-/* Three-hour gridlines, matching the scale beneath. */
-.timeline-track::before {
-  content: '';
+.timeline-track.is-zoomed { cursor: zoom-out; }
+
+.timeline-grid {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
+  pointer-events: none;
+}
+
+.timeline-void {
   position: absolute;
   inset: 0;
-  pointer-events: none;
-  background-image: repeating-linear-gradient(
-    90deg,
-    var(--line) 0 1px,
-    transparent 1px calc(100% / 8)
-  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .timeline-block {
@@ -454,13 +467,15 @@ body { min-height: 100vh; }
     color-mix(in srgb, var(--block) 62%, transparent),
     color-mix(in srgb, var(--block) 8%, transparent)
   );
-  transition: filter .14s;
+  transition: opacity .18s, filter .14s;
 }
 
-.timeline-block:hover {
-  filter: brightness(1.7);
-  z-index: 3;
-}
+.timeline-block:hover { filter: brightness(1.7); z-index: 3; }
+
+/* Isolating a category: everything else recedes rather than disappears, so
+   the shape of the day is still readable behind the highlight. */
+.timeline-block.is-dim { opacity: 0.12; }
+.legend-item.is-dim { opacity: 0.3; }
 
 .timeline-block .tooltip {
   display: none;
@@ -477,20 +492,28 @@ body { min-height: 100vh; }
   z-index: 20;
 }
 
-/* Blocks near the right edge would push their tooltip off-panel. */
+/* Blocks near the right edge would push their tooltip off the panel. */
 .timeline-block:nth-last-child(-n + 4) .tooltip { left: auto; right: 0; }
 
 .timeline-block:hover .tooltip { display: block; }
 
-.timeline-scale { display: flex; justify-content: space-between; }
+/* Ticks are absolutely positioned so labels line up with their gridline at
+   any zoom level, where the count and spacing both change. */
+.timeline-scale { position: relative; height: 12px; }
+
+.timeline-scale .hud-label {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
 
 .timeline-footer {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-end;
   gap: var(--sp-3);
   flex-wrap: wrap;
-  padding-top: var(--sp-1);
+  padding-top: var(--sp-2);
   border-top: 1px solid rgba(255, 255, 255, 0.04);
 }
 
@@ -503,6 +526,19 @@ body { min-height: 100vh; }
   font-family: var(--mono);
   font-size: 10px;
   color: var(--ink-3);
+  cursor: default;
+  transition: opacity .18s, color .18s;
 }
 
+.legend-item:hover { color: var(--ink); }
 .legend-item i { width: 8px; height: 8px; flex-shrink: 0; }
+
+.timeline-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+
+#timeline-hint {
+  color: var(--accent);
+  opacity: 0;
+  transition: opacity .2s;
+}
+
+#timeline-hint.is-visible { opacity: 1; }

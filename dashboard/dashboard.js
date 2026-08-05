@@ -124,6 +124,8 @@ function shiftDate(direction) {
       break;
   }
   currentDate = next;
+  // A zoom belongs to the day it was made on, not to the panel.
+  resetTimelineViewState();
   loadData();
 }
 
@@ -174,6 +176,7 @@ function setupViewTabs() {
       document.querySelectorAll('.view-tabs button').forEach((t) => t.classList.remove('is-active'));
       tab.classList.add('is-active');
       currentRange = tab.dataset.range;
+      resetTimelineViewState();
       loadData();
     });
   });
@@ -490,12 +493,102 @@ function renderTimeTrendChart(aggregates, sessions) {
   });
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * Zoom steps, as hours of visible span.
+ *
+ * Every step is even, so halving one never lands on a fraction and a window's
+ * bounds stay whole hours at every level — which is what keeps the axis
+ * readable as clock time rather than decimal hours.
+ */
+const TIMELINE_ZOOM_STEPS = [24, 8, 4, 2, 1];
+
+/** Milliseconds allowed between clicks before the first is treated as a zoom. */
+const DOUBLE_CLICK_MS = 240;
+
+const timelineView = { level: 0, start: 0, end: 24 };
+
+let timelineClickTimer = null;
 
 /** HH:MM in local time. */
 function clockLabel(timestamp) {
   const d = new Date(timestamp);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+const hourLabelText = (hour) => `${String(Math.floor(hour) % 24).padStart(2, '0')}:00`;
+
+/** Drop back to the whole day without redrawing — used when the period changes. */
+function resetTimelineViewState() {
+  Object.assign(timelineView, { level: 0, start: 0, end: 24 });
+}
+
+function resetTimelineZoom() {
+  resetTimelineViewState();
+  renderDayTimeline(loadedSessions);
+}
+
+/**
+ * Zoom one step in, centred on the whole hour nearest the click.
+ *
+ * At the edges of the day the window slides rather than shrinks, so the span
+ * stays exactly what the zoom level promises — clicking near midnight gives a
+ * full eight hours of 16:00–24:00, not a truncated sliver.
+ *
+ * @param {number} hour - position clicked, in hours from midnight
+ */
+function zoomTimelineAt(hour) {
+  const lastLevel = TIMELINE_ZOOM_STEPS.length - 1;
+
+  if (timelineView.level >= lastLevel) {
+    showTimelineHint('Fully zoomed in — double-click to reset to 24 h');
+    return;
+  }
+
+  const level = timelineView.level + 1;
+  const span = TIMELINE_ZOOM_STEPS[level];
+
+  // Nearest whole hour becomes the centre: 5:45 centres on 6, 7:10 on 7.
+  const centre = Math.round(hour);
+
+  // floor/ceil rather than ±span/2, so a one-hour span still has whole bounds.
+  let start = centre - Math.floor(span / 2);
+  let end = start + span;
+
+  if (start < 0) {
+    end -= start;
+    start = 0;
+  }
+  if (end > 24) {
+    start -= end - 24;
+    end = 24;
+  }
+
+  Object.assign(timelineView, { level, start: Math.max(0, start), end });
+  renderDayTimeline(loadedSessions);
+}
+
+let timelineHintTimer = null;
+
+function showTimelineHint(message) {
+  const hint = document.getElementById('timeline-hint');
+  if (!hint) return;
+  hint.textContent = message;
+  hint.classList.add('is-visible');
+  clearTimeout(timelineHintTimer);
+  timelineHintTimer = setTimeout(() => hint.classList.remove('is-visible'), 3000);
+}
+
+/**
+ * Dim every block that is not in the given category.
+ * Passing null clears the effect.
+ */
+function focusTimelineCategory(categoryId) {
+  const container = document.getElementById('day-timeline');
+  for (const el of container.querySelectorAll('[data-cat]')) {
+    el.classList.toggle('is-dim', categoryId != null && el.dataset.cat !== categoryId);
+  }
 }
 
 /**
@@ -508,9 +601,9 @@ function clockLabel(timestamp) {
  */
 function renderDayTimeline(sessions) {
   const container = document.getElementById('day-timeline');
-  const blocks = buildBlocks(sessions);
+  const allBlocks = buildBlocks(sessions);
 
-  if (blocks.length === 0) {
+  if (allBlocks.length === 0) {
     render(container, html`<p class="hud-empty">NO DATA FOR THIS PERIOD</p>`);
     return;
   }
@@ -518,42 +611,116 @@ function renderDayTimeline(sessions) {
   const { start } = getDateRangeForView();
   const dayStart = new Date(`${start}T00:00:00`).getTime();
 
-  const longest = blocks.reduce((max, b) => Math.max(max, b.duration), 0);
+  const viewStart = dayStart + timelineView.start * HOUR_MS;
+  const viewSpanHours = timelineView.end - timelineView.start;
+  const viewSpanMs = viewSpanHours * HOUR_MS;
+  const viewEnd = viewStart + viewSpanMs;
 
-  // Categories actually present, so the legend explains only what is on screen.
-  const present = [...new Set(blocks.map((b) => b.categoryId))];
+  // Clip to the visible window, keeping the true duration for the tooltip so a
+  // block cut off by the window edge still reports how long it actually was.
+  const visible = allBlocks
+    .map((block) => {
+      const from = Math.max(block.startTime, viewStart);
+      const to = Math.min(block.endTime, viewEnd);
+      return to > from ? { ...block, from, to } : null;
+    })
+    .filter(Boolean);
+
+  const longest = allBlocks.reduce((max, b) => Math.max(max, b.duration), 0);
+  const present = [...new Set(visible.map((b) => b.categoryId))];
+
+  // Whole-hour ticks. Wider windows step in threes to stay legible.
+  const step = viewSpanHours >= 24 ? 3 : 1;
+  const ticks = [];
+  for (let h = timelineView.start; h <= timelineView.end; h += step) ticks.push(h);
+
+  const positionOf = (hour) => ((hour - timelineView.start) / viewSpanHours) * 100;
+
+  const zoomedIn = timelineView.level > 0;
 
   render(container, html`
-    <div class="timeline-track">
-      ${blocks.map((block) => {
-        const offset = Math.min(100, Math.max(0, ((block.startTime - dayStart) / DAY_MS) * 100));
-        // A minimum width keeps brief visits visible; at this scale a single
-        // minute is well under a pixel.
-        const width = Math.max(0.3, Math.min(100 - offset, (block.duration / DAY_MS) * 100));
-        const colour = cssColor(categories.get(block.categoryId).color);
-        return html`<div class="timeline-block"
-             style="left:${offset.toFixed(3)}%;width:${width.toFixed(3)}%;--block:${colour}">
-          <span class="tooltip">${block.domain} · ${formatDuration(block.duration)} · ${clockLabel(block.startTime)}</span>
-        </div>`;
-      })}
+    <div class="timeline-track ${zoomedIn ? 'is-zoomed' : ''}" id="timeline-track">
+      ${ticks.map((h) => html`
+        <div class="timeline-grid" style="left:${positionOf(h).toFixed(3)}%"></div>
+      `)}
+
+      ${visible.length === 0
+        ? html`<p class="hud-empty timeline-void">NOTHING TRACKED IN THIS RANGE</p>`
+        : visible.map((block) => {
+            const offset = ((block.from - viewStart) / viewSpanMs) * 100;
+            // A floor on width keeps brief visits visible; across a whole day a
+            // single minute is well under one pixel.
+            const width = Math.max(0.25, Math.min(100 - offset, ((block.to - block.from) / viewSpanMs) * 100));
+            const colour = cssColor(categories.get(block.categoryId).color);
+            return html`<div class="timeline-block"
+                 data-cat="${block.categoryId}"
+                 style="left:${offset.toFixed(3)}%;width:${width.toFixed(3)}%;--block:${colour}">
+              <span class="tooltip">${block.domain} · ${formatDuration(block.duration)} · ${clockLabel(block.startTime)}</span>
+            </div>`;
+          })}
     </div>
 
     <div class="timeline-scale">
-      ${Array.from({ length: 9 }, (_, i) => html`<span class="hud-label">${String(i * 3).padStart(2, '0')}</span>`)}
+      ${ticks.map((h) => html`
+        <span class="hud-label" style="left:${positionOf(h).toFixed(3)}%">${hourLabelText(h)}</span>
+      `)}
     </div>
 
     <div class="timeline-footer">
       <div class="timeline-legend">
         ${present.map((id) => {
           const cat = categories.get(id);
-          return html`<span class="legend-item">
+          return html`<span class="legend-item" data-cat="${id}">
             <i style="background:${cssColor(cat.color)}"></i>${cat.name}
           </span>`;
         })}
       </div>
-      <span class="hud-label">${blocks.length} BLOCKS · LONGEST ${formatDuration(longest)}</span>
+      <div class="timeline-meta">
+        <span class="hud-label" id="timeline-hint"></span>
+        <span class="hud-label">
+          ${zoomedIn ? `${viewSpanHours}H VIEW · ` : ''}${visible.length} BLOCKS · LONGEST ${formatDuration(longest)}
+        </span>
+      </div>
     </div>
   `);
+
+  bindTimelineInteractions(container);
+}
+
+/**
+ * Click to zoom, double-click to reset, hover to isolate a category.
+ *
+ * Rebound on every render because the markup is replaced wholesale.
+ */
+function bindTimelineInteractions(container) {
+  const track = container.querySelector('#timeline-track');
+  if (!track) return;
+
+  track.addEventListener('click', (event) => {
+    // Read the position now: by the time the timer fires the event is stale.
+    const rect = track.getBoundingClientRect();
+    const fraction = (event.clientX - rect.left) / rect.width;
+    const hour = timelineView.start + fraction * (timelineView.end - timelineView.start);
+
+    // Hold the zoom briefly in case a second click follows — otherwise a
+    // double-click would zoom in and reset, and the zoom would be wasted.
+    if (timelineClickTimer) return;
+    timelineClickTimer = setTimeout(() => {
+      timelineClickTimer = null;
+      zoomTimelineAt(hour);
+    }, DOUBLE_CLICK_MS);
+  });
+
+  track.addEventListener('dblclick', () => {
+    clearTimeout(timelineClickTimer);
+    timelineClickTimer = null;
+    resetTimelineZoom();
+  });
+
+  for (const el of container.querySelectorAll('[data-cat]')) {
+    el.addEventListener('mouseenter', () => focusTimelineCategory(el.dataset.cat));
+    el.addEventListener('mouseleave', () => focusTimelineCategory(null));
+  }
 }
 
 function baseChartOptions(t, tooltipLabel, tickSuffix) {
