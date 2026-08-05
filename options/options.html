@@ -181,6 +181,24 @@
       <div class="overrides-list" id="overrides-list"></div>
     </section>
 
+    <!-- Maintenance -->
+    <section class="section">
+      <h2>Maintenance</h2>
+      <p class="section-desc">
+        Earlier versions credited sleep and suspend time to whichever page was open,
+        producing single sessions many hours long. This caps any such record back to a
+        plausible length. Legitimate sessions are left untouched.
+      </p>
+      <div class="setting-row">
+        <div class="setting-info">
+          <label>Repair Overlong Sessions</label>
+          <p>Scans your history and caps sessions that could not have been real browsing.</p>
+        </div>
+        <button class="hud-btn" id="repair-sessions">Scan &amp; Repair</button>
+      </div>
+      <div class="ai-status" id="repair-status" hidden></div>
+    </section>
+
     <!-- Danger Zone -->
     <section class="section danger-zone">
       <h2>Danger Zone</h2>

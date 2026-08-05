@@ -337,10 +337,15 @@
 
     const isExpanded = isTheater || isFullscreenAttr || isFullscreenAPI;
 
-    if (isExpanded !== lastTheaterOrFull) {
+    // Re-send while expanded, not only on change. The background signal expires
+    // unless refreshed, which is what stops a stuck "watching fullscreen" flag
+    // from suppressing idle detection for the rest of the browser session.
+    if (isExpanded || isExpanded !== lastTheaterOrFull) {
+      if (isExpanded !== lastTheaterOrFull) {
+        debug('YouTube expanded state changed:', isExpanded,
+          '| theater:', isTheater, '| fullscreen:', isFullscreenAttr || isFullscreenAPI);
+      }
       lastTheaterOrFull = isExpanded;
-      debug('YouTube expanded state changed:', isExpanded,
-        '| theater:', isTheater, '| fullscreen:', isFullscreenAttr || isFullscreenAPI);
       chrome.runtime.sendMessage({
         type: 'YOUTUBE_THEATER',
         data: { isExpanded, isTheater, isFullscreen: isFullscreenAttr || isFullscreenAPI },

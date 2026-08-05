@@ -1,6 +1,8 @@
 import {
   ALARMS,
   FLUSH_INTERVAL_MINUTES,
+  TICK_INTERVAL_MINUTES,
+  MEDIA_SIGNAL_TTL_MS,
   TRACKING_STATES,
   STORAGE_KEYS,
 } from '../shared/constants.js';
@@ -29,16 +31,37 @@ const log = createLogger('worker');
  * rather than a module variable.
  */
 
-// YouTube fullscreen/theater state is stored in chrome.storage.session
-// (module variables don't survive MV3 service worker restarts)
-async function isYouTubeExpanded() {
-  const result = await chrome.storage.session.get(STORAGE_KEYS.YT_EXPANDED);
-  return !!result[STORAGE_KEYS.YT_EXPANDED];
+/*
+ * Media signals
+ * ─────────────
+ * These suppress idle pausing, so a signal that gets stuck "on" disables idle
+ * detection for the rest of the browser session and a page left open all day
+ * accrues continuously. Every signal therefore carries a timestamp and expires
+ * unless the page re-asserts it. The failure mode becomes a few seconds of
+ * over-tracking instead of hours, and it self-heals with no cleanup path that
+ * can itself be missed.
+ *
+ * Stored in chrome.storage.session because module variables do not survive an
+ * MV3 worker teardown.
+ */
+
+async function writeSignal(key, value) {
+  return chrome.storage.session.set({ [key]: { value: !!value, at: Date.now() } });
 }
 
-async function setYouTubeExpanded(value) {
-  return chrome.storage.session.set({ [STORAGE_KEYS.YT_EXPANDED]: !!value });
+async function readSignal(key) {
+  const stored = await chrome.storage.session.get(key);
+  const signal = stored[key];
+  if (!signal || typeof signal !== 'object') return false;
+  if (!signal.value) return false;
+  return Date.now() - signal.at < MEDIA_SIGNAL_TTL_MS;
 }
+
+const isYouTubeExpanded = () => readSignal(STORAGE_KEYS.YT_EXPANDED);
+const setYouTubeExpanded = (value) => writeSignal(STORAGE_KEYS.YT_EXPANDED, value);
+
+const isPageMediaPlaying = () => readSignal(STORAGE_KEYS.MEDIA_PLAYING);
+export const setPageMediaPlaying = (value) => writeSignal(STORAGE_KEYS.MEDIA_PLAYING, value);
 
 // ─── Listener Registration (top level — see lifecycle note) ─────────
 
@@ -88,9 +111,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
 async function init() {
   await storage.initStorage();
 
-  // Set up periodic alarm
+  // Periodic flush to IndexedDB, and the heartbeat that accrues time.
   chrome.alarms.create(ALARMS.FLUSH_SESSION, {
     periodInMinutes: FLUSH_INTERVAL_MINUTES,
+  });
+  chrome.alarms.create(ALARMS.TICK, {
+    periodInMinutes: TICK_INTERVAL_MINUTES,
   });
 
   await applyIdleThresholdFromSettings();
@@ -212,6 +238,23 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
 // ─── Alarm Events ──────────────────────────────────────────────────
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
+  // Heartbeat. Credits the last minute if the machine was awake for it, and
+  // discards the gap entirely if it was not.
+  if (alarm.name === ALARMS.TICK) {
+    try {
+      const result = await tracker.tickSession();
+      if (result?.discarded > 0) {
+        log.info(
+          `Discarded ${Math.round(result.discarded / 60000)} minutes of untracked gap ` +
+          '(device asleep or suspended)'
+        );
+      }
+    } catch (err) {
+      log.error('Heartbeat failed:', err);
+    }
+    return;
+  }
+
   if (alarm.name !== ALARMS.FLUSH_SESSION) return;
 
   // Each step is independent; one failing must not skip the others.
@@ -248,6 +291,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     return true;
   }
+  // Media playback state from the generic content script. Only the tracked tab
+  // may assert it — otherwise a video in a background tab would keep idle
+  // detection suppressed for a page the user is not looking at.
+  if (message.type === 'MEDIA_STATE') {
+    storage.getCurrentSession()
+      .then((current) => {
+        if (!current || current.tabId !== sender?.tab?.id) return { ok: false, ignored: true };
+        return setPageMediaPlaying(!!message.data.playing).then(() => ({ ok: true }));
+      })
+      .then(sendResponse)
+      .catch((err) => sendResponse({ ok: false, error: err?.message }));
+    return true;
+  }
+
   if (message.type === 'YOUTUBE_THEATER') {
     setYouTubeExpanded(!!message.data.isExpanded)
       .then(() => sendResponse({ ok: true }))
@@ -341,15 +398,27 @@ async function handleUserIdle(reason) {
 }
 
 /**
- * Check whether the *tracked* tab is playing media.
+ * Whether the tracked tab is playing media, and so counts as watched rather
+ * than abandoned.
  *
  * Scoped to the tracked tab on purpose: a global "is any tab audible" check
  * means background music suppresses idle detection entirely, so a locked
  * machine with Spotify open would log hours of phantom browsing.
+ *
+ * Three signals, because none is sufficient alone:
+ *  - a reported playing <video>/<audio>, which catches muted playback that
+ *    tab.audible misses — someone watching a subtitled video with the sound
+ *    off is still watching;
+ *  - YouTube theater or fullscreen, which is deliberate viewing intent;
+ *  - tab.audible, as a backstop for players the content script cannot see,
+ *    such as media inside a cross-origin frame.
+ *
+ * The first two expire unless re-asserted, so neither can wedge idle
+ * detection off permanently.
  */
 async function checkIfMediaPlaying() {
-  // YouTube theater/fullscreen implies the user is actively watching
   if (await isYouTubeExpanded()) return true;
+  if (await isPageMediaPlaying()) return true;
 
   try {
     const current = await storage.getCurrentSession();

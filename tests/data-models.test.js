@@ -9,6 +9,7 @@ import {
   sessionElapsed,
   buildAggregate,
 } from '../shared/data-models.js';
+import { creditableInterval } from '../shared/data-models.js';
 import { MAX_TRACKED_INTERVAL_MS } from '../shared/constants.js';
 
 /**
@@ -39,11 +40,57 @@ test('sessionElapsed ignores the open interval when paused', () => {
   assert.equal(sessionElapsed(s, now), 3 * MINUTE);
 });
 
-test('sessionElapsed clamps gaps caused by system sleep', () => {
+test('sessionElapsed discards gaps caused by system sleep', () => {
   const now = 1_000_000_000;
-  // Eight hours since the last flush means the machine was asleep, not browsing.
+  // Eight hours with no heartbeat means the machine was asleep, not browsing.
   const s = sessionAt({ startTime: now - 8 * 60 * MINUTE, duration: 0 });
-  assert.equal(sessionElapsed(s, now), MAX_TRACKED_INTERVAL_MS);
+  assert.equal(sessionElapsed(s, now), 0);
+});
+
+test('a sleep gap does not erase time banked before it', () => {
+  const now = 1_000_000_000;
+  const s = sessionAt({ startTime: now - 8 * 60 * MINUTE, duration: 12 * MINUTE });
+  assert.equal(sessionElapsed(s, now), 12 * MINUTE, 'banked time is still real');
+});
+
+// ─── Interval crediting ────────────────────────────────────────────
+
+test('creditableInterval accepts intervals a heartbeat vouches for', () => {
+  assert.equal(creditableInterval(30 * SECOND), 30 * SECOND);
+  assert.equal(creditableInterval(MINUTE), MINUTE);
+  assert.equal(creditableInterval(MAX_TRACKED_INTERVAL_MS), MAX_TRACKED_INTERVAL_MS);
+});
+
+test('creditableInterval discards oversized gaps outright', () => {
+  // Discarding rather than clamping is the point: clamping an 11-hour sleep to
+  // 10 minutes still invents 10 minutes, and several sleeps a day add up.
+  assert.equal(creditableInterval(MAX_TRACKED_INTERVAL_MS + 1), 0);
+  assert.equal(creditableInterval(11 * 60 * MINUTE), 0);
+  assert.equal(creditableInterval(24 * 60 * MINUTE), 0);
+});
+
+test('creditableInterval rejects junk and negative intervals', () => {
+  for (const bad of [0, -5, NaN, Infinity, null, undefined, 'abc']) {
+    assert.equal(creditableInterval(bad), 0, `${JSON.stringify(bad)} should credit nothing`);
+  }
+});
+
+test('creditableInterval honours a caller-supplied ceiling', () => {
+  assert.equal(creditableInterval(5 * MINUTE, 10 * MINUTE), 5 * MINUTE);
+  assert.equal(creditableInterval(5 * MINUTE, MINUTE), 0);
+});
+
+test('an overnight sleep credits nothing across repeated heartbeats', () => {
+  // Simulates the reported bug: a page left open while the lid is shut.
+  // Awake ticks accrue; the wake-up tick sees an 11-hour gap and credits zero.
+  const tick = MINUTE;
+  let banked = 0;
+
+  for (let i = 0; i < 5; i++) banked += creditableInterval(tick);   // 5 min awake
+  banked += creditableInterval(11 * 60 * MINUTE);                    // lid shut
+  for (let i = 0; i < 5; i++) banked += creditableInterval(tick);   // 5 min awake
+
+  assert.equal(banked, 10 * MINUTE, 'only the waking minutes should count');
 });
 
 test('sessionElapsed never goes negative when the wall clock moves backwards', () => {
@@ -55,10 +102,10 @@ test('sessionElapsed never goes negative when the wall clock moves backwards', (
 test('endSession preserves time banked before a pause', () => {
   // This is the regression that silently deleted idle-interrupted time:
   // endSession used to overwrite duration with (now - startTime).
-  // Kept under MAX_TRACKED_INTERVAL_MS so the sleep clamp is not what's tested here.
-  const banked = 4 * MINUTE;
+  // Kept under MAX_TRACKED_INTERVAL_MS so sleep detection is not what's tested here.
+  const banked = 2 * MINUTE;
   const paused = pauseSession(sessionAt({ startTime: Date.now() - banked }));
-  assert.ok(paused.duration >= banked - SECOND, 'pause should bank ~4 minutes');
+  assert.ok(paused.duration >= banked - SECOND, 'pause should bank ~2 minutes');
 
   const resumed = resumeSession(paused);
   const ended = endSession(resumed);

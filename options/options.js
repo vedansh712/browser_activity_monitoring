@@ -488,6 +488,36 @@ async function downloadModel() {
   });
 }
 
+// ─── Maintenance ───────────────────────────────────────────────────
+
+/** Cap historical sessions that recorded sleep time as browsing. */
+async function repairSessions() {
+  const button = document.getElementById('repair-sessions');
+  const status = document.getElementById('repair-status');
+
+  button.disabled = true;
+  status.hidden = false;
+  status.className = 'ai-status';
+  status.textContent = 'Scanning your history…';
+
+  await withErrorReporting('repair sessions', async () => {
+    try {
+      const result = await sendMessage({ type: MSG.REPAIR_SESSIONS });
+      const minutes = Math.round((result.reclaimedMs ?? 0) / 60000);
+
+      status.className = result.repaired > 0 ? 'ai-status available' : 'ai-status';
+      status.textContent = result.repaired > 0
+        ? `Repaired ${result.repaired} of ${result.scanned} sessions, removing ` +
+          `${formatDuration(result.reclaimedMs)} of time that was never actually spent browsing.`
+        : `Scanned ${result.scanned} sessions — nothing needed repairing.`;
+
+      showStatus(result.repaired > 0 ? `Removed ${minutes} phantom minutes` : 'History is clean');
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 // ─── Event Listeners ───────────────────────────────────────────────
 
 function setupEventListeners() {
@@ -506,6 +536,7 @@ function setupEventListeners() {
   span.addEventListener('change', () => saveAccentSpan());
 
   document.getElementById('ai-download').addEventListener('click', downloadModel);
+  document.getElementById('repair-sessions').addEventListener('click', repairSessions);
 
   document.getElementById('add-excluded').addEventListener('click', addExcludedDomain);
   document.getElementById('new-excluded').addEventListener('keydown', (e) => {

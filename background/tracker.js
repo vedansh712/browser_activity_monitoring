@@ -4,6 +4,7 @@ import {
   pauseSession,
   resumeSession,
   sessionElapsed,
+  creditableInterval,
 } from '../shared/data-models.js';
 import { MIN_SESSION_MS } from '../shared/constants.js';
 import { extractDomain, generateId, formatDate } from '../shared/utils.js';
@@ -77,6 +78,40 @@ export async function resumeCurrentSession() {
   const resumed = resumeSession(current);
   await storage.setCurrentSession(resumed);
   return resumed;
+}
+
+/**
+ * Heartbeat. Credits the time since the last tick to the running session.
+ *
+ * This is what stops sleep being counted as browsing. Elapsed time is no
+ * longer inferred from a start timestamp — which cannot distinguish a page
+ * left open for eleven hours from a laptop shut for eleven hours — but accrued
+ * a minute at a time while the machine is demonstrably awake.
+ *
+ * Alarms do not fire while a device is suspended, so an oversized gap is
+ * direct evidence that nothing was happening. That gap is discarded outright
+ * rather than clamped, because clamping still credits time that was never
+ * spent: five sleeps a day at a ten-minute clamp is nearly an hour of
+ * invented browsing.
+ *
+ * @returns {Promise<{credited: number, discarded: number}|null>}
+ */
+export async function tickSession() {
+  const current = await storage.getCurrentSession();
+  if (!current || !current.isActive) return null;
+
+  const now = Date.now();
+  // Math.max guards a wall clock that moved backwards (NTP, DST, manual change).
+  const elapsed = Math.max(0, now - current.startTime);
+  const credited = creditableInterval(elapsed);
+
+  await storage.setCurrentSession({
+    ...current,
+    duration: (current.duration || 0) + credited,
+    startTime: now,
+  });
+
+  return { credited, discarded: elapsed - credited };
 }
 
 /**

@@ -5,6 +5,7 @@ export const STORAGE_KEYS = {
   CURRENT_SESSION: 'current_session',
   TRACKING_STATE: 'tracking_state',
   YT_EXPANDED: 'yt_expanded', // YouTube is in theater or fullscreen mode
+  MEDIA_PLAYING: 'media_playing', // tracked page has a video or audio element playing
   UNCATEGORIZED: 'uncategorized_queue', // pending domains awaiting user categorization
   AI_CACHE: 'ai_cache', // domain -> categoryId (or null for "AI gave up")
 };
@@ -29,6 +30,7 @@ export const TRACKING_STATES = {
 // Alarm names
 export const ALARMS = {
   FLUSH_SESSION: 'flush_session',
+  TICK: 'tick',
 };
 
 // Intervals
@@ -39,14 +41,54 @@ export const DEFAULT_RETENTION_DAYS = 90;
 // Sessions shorter than this are noise (tab flicked through on the way elsewhere).
 export const MIN_SESSION_MS = 1000;
 
-// The flush alarm resets a live session's clock every FLUSH_INTERVAL_MINUTES, so a
-// single uninterrupted interval should never exceed that. If it does, the alarm
-// didn't fire — almost always because the machine slept or was suspended. Counting
-// that gap would silently add hours of phantom browsing, so we clamp it away.
-export const MAX_TRACKED_INTERVAL_MS = FLUSH_INTERVAL_MINUTES * 2 * 60 * 1000;
+/**
+ * Heartbeat interval.
+ *
+ * Time is accrued in small verified increments rather than computed from a
+ * start timestamp, because a start timestamp cannot tell the difference
+ * between "this page was open for eleven hours" and "the laptop lid was shut
+ * for eleven hours". Alarms do not fire while the machine is suspended, so a
+ * missing heartbeat is direct evidence that no browsing happened.
+ *
+ * One minute is the shortest period Chrome honours for a released extension.
+ */
+export const TICK_INTERVAL_MINUTES = 1;
+
+/**
+ * The longest gap between heartbeats still treated as real elapsed time.
+ *
+ * Anything longer means the heartbeat did not run — the machine slept, the
+ * browser was suspended, or the device was closed — and the entire gap is
+ * discarded rather than credited. The allowance above the tick interval exists
+ * only to tolerate Chrome delaying an alarm under load.
+ */
+export const MAX_TRACKED_INTERVAL_MS = TICK_INTERVAL_MINUTES * 3 * 60 * 1000;
 
 // chrome.idle rejects intervals below 15s.
 export const MIN_IDLE_THRESHOLD_SECONDS = 15;
+
+/**
+ * How long a media signal stays valid without being re-asserted.
+ *
+ * The "media is playing" exemption suppresses idle pausing, so a stuck flag
+ * disables idle detection entirely for the rest of the browser session. Making
+ * the signal expire means the worst case is a few seconds of over-tracking
+ * instead of hours, and it self-heals with no cleanup path to get wrong.
+ */
+export const MEDIA_SIGNAL_TTL_MS = 15_000;
+
+/** How often a page re-asserts that its media is still playing. */
+export const MEDIA_SIGNAL_REFRESH_MS = 5_000;
+
+/**
+ * Ceiling used when repairing historical sessions.
+ *
+ * A correctly-recorded session cannot exceed one flush period by much, since
+ * the flush closes the record and starts a new one. Anything far above that
+ * was produced by the pre-heartbeat code crediting sleep to an open page.
+ * Deliberately generous so the repair cannot damage legitimate records.
+ */
+export const MAX_PLAUSIBLE_SESSION_MS = FLUSH_INTERVAL_MINUTES * 2 * 60 * 1000;
 
 /**
  * Accent colour.
@@ -193,6 +235,7 @@ export const MSG = {
   YOUTUBE_FULLSCREEN: 'YOUTUBE_FULLSCREEN',
   YOUTUBE_THEATER: 'YOUTUBE_THEATER',
   VISIBILITY_CHANGE: 'VISIBILITY_CHANGE',
+  MEDIA_STATE: 'MEDIA_STATE',
 
   // Background → Content Script
   REREQUEST_YT_META: 'REREQUEST_YT_META',
@@ -207,6 +250,7 @@ export const MSG = {
   GET_UNCATEGORIZED: 'GET_UNCATEGORIZED',
   CLEAR_HISTORY: 'CLEAR_HISTORY',
   RESET_EVERYTHING: 'RESET_EVERYTHING',
+  REPAIR_SESSIONS: 'REPAIR_SESSIONS',
 };
 
 // Default categories

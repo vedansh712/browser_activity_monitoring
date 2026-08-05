@@ -36,6 +36,23 @@ export function createSession({ url, title, categoryId, tabId = null, meta = nul
 }
 
 /**
+ * How much of an elapsed interval may be counted as real browsing.
+ *
+ * Returns the interval when a heartbeat vouches for it, and zero when it is
+ * too long to have happened while the machine was awake. Discarding rather
+ * than clamping is deliberate: clamping still credits time nobody spent, and
+ * a handful of sleeps a day adds up to an hour of invented browsing.
+ *
+ * @param {number} elapsedMs
+ * @param {number} [maxMs]
+ * @returns {number}
+ */
+export function creditableInterval(elapsedMs, maxMs = MAX_TRACKED_INTERVAL_MS) {
+  if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return 0;
+  return elapsedMs <= maxMs ? elapsedMs : 0;
+}
+
+/**
  * Total elapsed time for a session, including the currently-open interval.
  *
  * The open interval is clamped to MAX_TRACKED_INTERVAL_MS: if more time has
@@ -48,7 +65,7 @@ export function sessionElapsed(session, now = Date.now()) {
   if (!session.isActive) return banked;
   // Math.max guards against the wall clock moving backwards (NTP, DST, manual change).
   const open = Math.max(0, now - session.startTime);
-  return banked + Math.min(open, MAX_TRACKED_INTERVAL_MS);
+  return banked + creditableInterval(open);
 }
 
 /**

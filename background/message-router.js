@@ -1,4 +1,4 @@
-import { MSG, STORAGE_KEYS } from '../shared/constants.js';
+import { MSG, STORAGE_KEYS, MAX_PLAUSIBLE_SESSION_MS } from '../shared/constants.js';
 import { todayKey } from '../shared/utils.js';
 import { createLogger } from '../shared/logger.js';
 import * as storage from './storage-manager.js';
@@ -168,6 +168,11 @@ const messageHandlers = {
     await writeUncategorized({});
     await requestYouTubeTabsToReextract();
     return { ok: true };
+  },
+
+  [MSG.REPAIR_SESSIONS]: async () => {
+    const stats = await storage.repairImplausibleSessions(MAX_PLAUSIBLE_SESSION_MS);
+    return { ok: true, ...stats };
   },
 
   [MSG.RESET_EVERYTHING]: async () => {

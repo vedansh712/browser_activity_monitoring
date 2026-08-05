@@ -347,6 +347,78 @@ export async function pruneOldData(retentionDays) {
   });
 }
 
+// ─── Repair ────────────────────────────────────────────────────────
+
+/**
+ * Cap sessions whose recorded duration could not have been real browsing.
+ *
+ * Before heartbeat accrual existed, a suspended device credited the whole
+ * sleep to whatever page happened to be open, producing single sessions of
+ * many hours. Those records are still in the database and still skew every
+ * total, so they need repairing rather than just preventing.
+ *
+ * Durations are capped rather than deleted: the user genuinely did visit the
+ * page, and only the sleep portion is fictitious. The ceiling is generous on
+ * purpose — it must not touch legitimate records — so this under-corrects
+ * rather than destroying real data.
+ *
+ * @param {number} ceilingMs
+ * @returns {Promise<{scanned: number, repaired: number, reclaimedMs: number}>}
+ */
+export async function repairImplausibleSessions(ceilingMs) {
+  const ceiling = Number(ceilingMs);
+  if (!Number.isFinite(ceiling) || ceiling <= 0) {
+    throw new TypeError(`repairImplausibleSessions requires a positive ceiling, got ${ceilingMs}`);
+  }
+
+  const database = await openDB();
+  const stats = { scanned: 0, repaired: 0, reclaimedMs: 0 };
+
+  await new Promise((resolve, reject) => {
+    const tx = database.transaction(STORES.SESSIONS, 'readwrite');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error('Repair transaction aborted'));
+
+    const request = tx.objectStore(STORES.SESSIONS).openCursor();
+    request.onsuccess = (event) => {
+      const cursor = event.target.result;
+      if (!cursor) return;
+
+      const session = cursor.value;
+      stats.scanned++;
+
+      if (session.duration > ceiling) {
+        stats.reclaimedMs += session.duration - ceiling;
+        stats.repaired++;
+        cursor.update({
+          ...session,
+          duration: ceiling,
+          endTime: session.startTime ? session.startTime + ceiling : session.endTime,
+          repairedAt: Date.now(),
+        });
+      }
+      cursor.continue();
+    };
+  });
+
+  // Stored aggregates are derived from these rows, so they are now wrong.
+  // Clearing them forces a rebuild on next read rather than leaving a cache
+  // that disagrees with its own source.
+  await new Promise((resolve, reject) => {
+    const tx = database.transaction(STORES.AGGREGATES, 'readwrite');
+    tx.objectStore(STORES.AGGREGATES).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+
+  log.info(
+    `Repaired ${stats.repaired} of ${stats.scanned} sessions, ` +
+    `reclaiming ${Math.round(stats.reclaimedMs / 60000)} minutes`
+  );
+  return stats;
+}
+
 // ─── Wipe Operations ───────────────────────────────────────────────
 
 /**
