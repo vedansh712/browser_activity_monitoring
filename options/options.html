@@ -173,12 +173,29 @@
     <!-- Custom Categories -->
     <section class="section">
       <h2>Custom Categories</h2>
+      <p class="section-desc">
+        Rules say exactly what a category covers. The example domains you give are also used
+        to recognise <em>similar</em> sites automatically, so you don&rsquo;t have to list every one.
+      </p>
+
       <div class="custom-categories" id="custom-categories"></div>
-      <div class="add-category-form" id="add-category-form">
-        <input type="text" id="new-cat-name" placeholder="Category name" class="hud-input">
-        <input type="color" id="new-cat-color" value="#667eea" class="input-color">
-        <input type="text" id="new-cat-domain" placeholder="Domain rule (e.g. example.com)" class="hud-input">
-        <button class="hud-btn is-active" id="add-category">Add Category</button>
+
+      <div class="add-category-form">
+        <div class="form-row">
+          <input type="text" id="new-cat-name" placeholder="Category name" class="hud-input">
+          <input type="color" id="new-cat-color" value="#667eea" class="input-color"
+                 aria-label="Category colour">
+        </div>
+
+        <div class="form-row">
+          <select id="new-rule-type" class="hud-select" aria-label="Rule type"></select>
+          <input type="text" id="new-rule-value" class="hud-input" placeholder="example.com">
+          <button class="hud-btn" id="add-rule">Add Rule</button>
+        </div>
+
+        <div class="rule-chips" id="pending-rules"></div>
+
+        <button class="hud-btn is-active" id="add-category">Create Category</button>
       </div>
     </section>
 

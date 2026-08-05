@@ -5,7 +5,11 @@ import * as storage from './storage-manager.js';
 import * as tracker from './tracker.js';
 import { createCategoryRegistry } from '../shared/category-registry.js';
 import { aggregateService, aiClassifier } from './container.js';
-import { classifyYouTube, learnFromUserCategorization } from './category-engine.js';
+import {
+  classifyYouTube,
+  learnFromUserCategorization,
+  seedSimilarityFromCategory,
+} from './category-engine.js';
 
 const log = createLogger('messages');
 
@@ -174,6 +178,17 @@ const messageHandlers = {
     await writeUncategorized({});
     await requestYouTubeTabsToReextract();
     return { ok: true };
+  },
+
+  /**
+   * Teach the similarity engine from a category the user just created.
+   *
+   * Runs in the worker rather than the options page because it writes to
+   * IndexedDB, which the options page reaches through this same module.
+   */
+  [MSG.SEED_CATEGORY]: async (message) => {
+    const seeded = await seedSimilarityFromCategory(message.data?.category);
+    return { ok: true, seeded };
   },
 
   [MSG.REPAIR_SESSIONS]: async () => {

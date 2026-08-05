@@ -14,6 +14,7 @@ import {
 import { clampInt, formatDuration } from '../shared/utils.js';
 import { html, render, cssColor } from '../shared/html.js';
 import { createCategoryRegistry } from '../shared/category-registry.js';
+import { RULE_TYPE_OPTIONS, validateRule, describeRule } from '../shared/category-rules.js';
 import {
   initTheme,
   applyAccent,
@@ -96,6 +97,8 @@ function renderAll() {
   document.getElementById('ai-enabled').checked = Boolean(settings.aiEnabled);
 
   renderAccent();
+  renderRuleTypes();
+  renderPendingRules();
   renderExcludedDomains();
   renderCustomCategories();
   renderDomainOverrides();
@@ -291,6 +294,44 @@ function renderExcludedDomains() {
   bindAll(container, '.remove-btn', 'click', (btn) => removeExcludedDomain(btn.dataset.domain));
 }
 
+/** Rules staged for the category currently being created. */
+let pendingRules = [];
+
+function renderRuleTypes() {
+  render(
+    document.getElementById('new-rule-type'),
+    html`${RULE_TYPE_OPTIONS.map((o) => html`<option value="${o.type}">${o.label}</option>`)}`
+  );
+  syncRulePlaceholder();
+}
+
+function syncRulePlaceholder() {
+  const type = document.getElementById('new-rule-type').value;
+  const option = RULE_TYPE_OPTIONS.find((o) => o.type === type);
+  document.getElementById('new-rule-value').placeholder = option?.placeholder ?? '';
+}
+
+function renderPendingRules() {
+  const container = document.getElementById('pending-rules');
+
+  if (pendingRules.length === 0) {
+    render(container, html`<span class="empty-hint">No rules yet — add at least one</span>`);
+    return;
+  }
+
+  render(container, html`${pendingRules.map((rule, i) => html`
+    <span class="rule-chip">
+      ${describeRule(rule)}
+      <button class="remove-btn" data-index="${i}" aria-label="Remove rule">&times;</button>
+    </span>
+  `)}`);
+
+  bindAll(container, '.remove-btn', 'click', (btn) => {
+    pendingRules.splice(Number(btn.dataset.index), 1);
+    renderPendingRules();
+  });
+}
+
 function renderCustomCategories() {
   const container = document.getElementById('custom-categories');
   const custom = categories.custom || [];
@@ -302,14 +343,32 @@ function renderCustomCategories() {
 
   render(container, html`${custom.map((cat) => html`
     <div class="custom-cat-item">
-      <span class="custom-cat-color" style="background:${cssColor(cat.color)}"></span>
-      <span class="custom-cat-name">${cat.name}</span>
-      <span class="custom-cat-rules">${cat.rules.map((r) => r.value).join(', ') || 'No rules'}</span>
-      <button class="btn btn-danger btn-small" data-category-id="${cat.id}">Remove</button>
+      <div class="custom-cat-head">
+        <span class="custom-cat-color" style="background:${cssColor(cat.color)}"></span>
+        <span class="custom-cat-name">${cat.icon} ${cat.name}</span>
+        <button class="hud-btn is-danger btn-small" data-remove-category="${cat.id}">Remove</button>
+      </div>
+      <div class="rule-chips">
+        ${(cat.rules ?? []).length === 0
+          ? html`<span class="empty-hint">No rules — this category will never match</span>`
+          : cat.rules.map((rule, i) => html`
+              <span class="rule-chip">
+                ${describeRule(rule)}
+                <button class="remove-btn"
+                        data-rule-category="${cat.id}"
+                        data-rule-index="${i}"
+                        aria-label="Remove rule">&times;</button>
+              </span>
+            `)}
+      </div>
     </div>
   `)}`);
 
-  bindAll(container, '[data-category-id]', 'click', (btn) => removeCustomCategory(btn.dataset.categoryId));
+  bindAll(container, '[data-remove-category]', 'click',
+    (btn) => removeCustomCategory(btn.dataset.removeCategory));
+
+  bindAll(container, '[data-rule-category]', 'click',
+    (btn) => removeRuleFromCategory(btn.dataset.ruleCategory, Number(btn.dataset.ruleIndex)));
 }
 
 function renderDomainOverrides() {
@@ -387,38 +446,83 @@ async function removeCustomCategory(categoryId) {
   });
 }
 
+/** Stage a rule for the category being created. */
+function addPendingRule() {
+  const typeInput = document.getElementById('new-rule-type');
+  const valueInput = document.getElementById('new-rule-value');
+
+  const result = validateRule({ type: typeInput.value, value: valueInput.value });
+  if (!result.ok) {
+    showStatus(result.error, 'error');
+    return;
+  }
+
+  const duplicate = pendingRules.some(
+    (r) => r.type === result.rule.type && r.value === result.rule.value
+  );
+  if (duplicate) {
+    showStatus('That rule is already in the list', 'error');
+    return;
+  }
+
+  pendingRules.push(result.rule);
+  valueInput.value = '';
+  renderPendingRules();
+}
+
 async function addCustomCategory() {
   const nameInput = document.getElementById('new-cat-name');
   const colorInput = document.getElementById('new-cat-color');
-  const domainInput = document.getElementById('new-cat-domain');
 
   const name = nameInput.value.trim();
   if (!name) {
     showStatus('Category name is required', 'error');
     return;
   }
-
-  const domainRule = normalizeDomainInput(domainInput.value);
-  if (domainInput.value.trim() && !domainRule) {
-    showStatus('Domain rule is not a valid domain', 'error');
+  if (pendingRules.length === 0) {
+    // A category with no rules can never match anything, so refusing here is
+    // kinder than silently creating one that does nothing.
+    showStatus('Add at least one rule so the category can match something', 'error');
     return;
   }
 
   await withErrorReporting('add category', async () => {
-    categories = await storage.addCustomCategory({
+    const category = {
       id: `custom_${Date.now()}`,
       name,
       color: cssColor(colorInput.value, '#667eea'),
       icon: '🏷️',
       isBuiltIn: false,
-      rules: domainRule ? [{ type: 'domain', value: domainRule }] : [],
-    });
+      rules: [...pendingRules],
+    };
+
+    categories = await storage.addCustomCategory(category);
     registry = createCategoryRegistry(categories);
 
+    // Teach the similarity engine, so the examples generalise to comparable
+    // sites instead of matching only the literal strings given.
+    const { seeded } = await sendMessage({ type: MSG.SEED_CATEGORY, data: { category } });
+
+    pendingRules = [];
     nameInput.value = '';
-    domainInput.value = '';
+    renderPendingRules();
     renderCustomCategories();
-    showStatus(`Added ${name}`);
+
+    showStatus(seeded > 0
+      ? `Added ${name} — will also match sites similar to your ${seeded} example${seeded > 1 ? 's' : ''}`
+      : `Added ${name}`);
+  });
+}
+
+async function removeRuleFromCategory(categoryId, index) {
+  await withErrorReporting('remove rule', async () => {
+    categories = await storage.updateCategories((current) => {
+      const category = (current.custom ?? []).find((c) => c.id === categoryId);
+      if (category) category.rules.splice(index, 1);
+    });
+    registry = createCategoryRegistry(categories);
+    renderCustomCategories();
+    showStatus('Rule removed');
   });
 }
 
@@ -579,6 +683,11 @@ function setupEventListeners() {
   });
 
   document.getElementById('add-category').addEventListener('click', addCustomCategory);
+  document.getElementById('add-rule').addEventListener('click', addPendingRule);
+  document.getElementById('new-rule-type').addEventListener('change', syncRulePlaceholder);
+  document.getElementById('new-rule-value').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') addPendingRule();
+  });
   document.getElementById('save-settings').addEventListener('click', saveSettings);
 
   document.getElementById('clear-history').addEventListener('click', () => {

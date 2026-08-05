@@ -396,3 +396,52 @@ body { min-height: 100vh; }
   height: 48px;
   image-rendering: auto;
 }
+
+/* ═══ Rule editor ═══════════════════════════════════════════════ */
+
+.add-category-form { display: flex; flex-direction: column; gap: var(--sp-3); }
+
+.form-row { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
+.form-row .hud-input { flex: 1; min-width: 150px; }
+.form-row .hud-select { flex-shrink: 0; }
+
+.rule-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.rule-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 9px;
+  background: var(--accent-wash);
+  border: 1px solid var(--accent-line);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-2);
+  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 5px 100%, 0 calc(100% - 5px));
+}
+
+.rule-chip .remove-btn {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.rule-chip .remove-btn:hover { color: var(--bad); }
+
+.custom-cat-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.custom-cat-head { display: flex; align-items: center; gap: var(--sp-3); }
+.custom-cat-head .custom-cat-name { flex: 1; }
+.btn-small { padding: 4px 10px; font-size: 9.5px; }

@@ -76,6 +76,8 @@ content-scripts/
 
 **Aggregates are a cache.** Sessions are the source of truth. A daily aggregate can always be rebuilt from them, and is rebuilt whenever its recorded session count disagrees with the live count.
 
+**Classification is a chain, not a branch.** `category-engine.js` holds an ordered list of named strategies — domain override, YouTube, category rules, keyword heuristics, similarity — and the first to claim a page wins. The on-device model is appended only when it is enabled and available, so the deterministic chain is complete on its own and AI is an additional tier rather than a dependency. Model results are recorded as similarity exemplars, so the offline path learns from the model and handles comparable sites without it next time.
+
 **Building markup.** Use the `html\`\`` tag from `shared/html.js`. It escapes interpolated values automatically, and `render()` refuses anything that is not `SafeHtml`, so user input cannot reach `innerHTML` unescaped.
 
 ## Permissions

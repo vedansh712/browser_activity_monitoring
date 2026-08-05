@@ -4,135 +4,134 @@ import {
   YOUTUBE_TITLE_HINTS,
 } from '../shared/constants.js';
 import { tokenize, jaccardSimilarity } from '../shared/utils.js';
+import { findMatchingRule, exampleDomains } from '../shared/category-rules.js';
 import * as storage from './storage-manager.js';
 
 const SIMILARITY_THRESHOLD = 0.25;
 
-/**
- * Main classification pipeline. Runs steps 1-6 in order, returns first match.
- * Step 7 (ask user) is handled by the service worker when this returns 'uncategorized'.
+/*
+ * Classification pipeline
+ * ───────────────────────
+ * An ordered chain of named strategies. Each is given the page and either
+ * claims it or declines, and the first claim wins.
  *
- * @param {string} domain
- * @param {string} url
- * @param {string} title - page title
- * @param {string} metaDescription - page meta description (from content script)
- * @param {Object|null} youtubeMeta - YouTube metadata if applicable
- * @returns {Promise<{categoryId: string, method: string}>}
+ * Written as a list rather than a run of if-statements for one practical
+ * reason: the on-device model is an optional extra tier, and expressing it as
+ * an entry that is present or absent keeps "do we have AI" a wiring decision
+ * in one place instead of a condition threaded through the logic. Everything
+ * below is deterministic and works with no model at all; AI only ever appends
+ * to the end.
+ *
+ * The tiers also feed each other. A model result, like a manual
+ * categorization, is recorded as a similarity exemplar — so the deterministic
+ * path learns from the model and classifies comparable sites later without it.
+ */
+
+/**
+ * @typedef {Object} PageContext
+ * @property {string}  domain
+ * @property {string}  url
+ * @property {string} [title]
+ * @property {string} [metaDescription]
+ * @property {Object} [youtubeMeta]
+ * @property {Object}  categories - as returned by storage.getCategories()
+ */
+
+/**
+ * @typedef {Object} Classification
+ * @property {string} categoryId
+ * @property {string} method - which strategy claimed it, for debugging and display
+ */
+
+/** The deterministic chain, in priority order. */
+const STRATEGIES = [
+  { name: 'domain_override', classify: byDomainOverride },
+  { name: 'youtube', classify: byYouTube },
+  { name: 'rule', classify: byRule },
+  { name: 'keyword', classify: byKeyword },
+  { name: 'similarity', classify: bySimilarity },
+];
+
+/**
+ * Classify a page using the deterministic chain.
+ *
+ * Returns 'uncategorized' when nothing claims it, which is the signal for the
+ * caller to try the optional model tier — deliberately not attempted here,
+ * because inference can involve a wait and classification sits on the path
+ * that starts a session.
+ *
+ * @param {PageContext} context
+ * @returns {Promise<Classification>}
  */
 export async function classifyPage({ domain, url, title, metaDescription, youtubeMeta }) {
   if (!domain) return { categoryId: 'uncategorized', method: 'none' };
 
   const categories = await storage.getCategories();
+  const context = { domain, url, title, metaDescription, youtubeMeta, categories };
 
-  // Step 1: Domain Override (user manually assigned this domain)
-  const override = categories.domainOverrides[domain];
-  if (override) {
-    return { categoryId: override, method: 'domain_override' };
+  for (const strategy of STRATEGIES) {
+    const result = await strategy.classify(context);
+    if (result) return { ...result, method: result.method ?? strategy.name };
   }
-
-  // Step 2: YouTube sub-classification.
-  // Runs BEFORE domain rules: youtube.com matches the Entertainment rule, so
-  // checking rules first would short-circuit every video into Entertainment
-  // and the per-video categorization below would never run.
-  if (isYouTubeDomain(domain) && youtubeMeta) {
-    return classifyYouTube(youtubeMeta, categories);
-  }
-
-  // Step 3: Domain Rules (built-in + custom)
-  const allCategories = [...(categories.custom || []), ...categories.builtIn];
-  const ruleMatch = matchDomainRules(domain, url, allCategories);
-  if (ruleMatch) {
-    return { categoryId: ruleMatch, method: 'domain_rule' };
-  }
-
-  // Step 4: Keyword Heuristics
-  const keywordMatch = matchKeywords(title, metaDescription, url);
-  if (keywordMatch) {
-    return { categoryId: keywordMatch, method: 'keyword_heuristic' };
-  }
-
-  // Step 5: Similarity Match (learned from user categorizations)
-  const similarityMatch = await matchSimilarity(domain, title);
-  if (similarityMatch) {
-    return { categoryId: similarityMatch, method: 'similarity' };
-  }
-
-  // Step 6: AI Classification (handled externally — returns null if unavailable)
-  // The service worker will attempt AI classification if we return uncategorized
 
   return { categoryId: 'uncategorized', method: 'none' };
 }
 
-// ─── Step 2: Domain Rule Matching ──────────────────────────────────
+/** Strategy names in order, for diagnostics. */
+export const strategyNames = () => STRATEGIES.map((s) => s.name);
 
-function matchDomainRules(domain, url, categories) {
-  for (const category of categories) {
-    for (const rule of category.rules) {
-      switch (rule.type) {
-        case 'domain':
-          if (domain === rule.value) return category.id;
-          break;
-        case 'domain_contains':
-          if (domain.includes(rule.value)) return category.id;
-          break;
-        case 'url_regex':
-          try {
-            if (new RegExp(rule.value).test(url)) return category.id;
-          } catch { /* invalid regex, skip */ }
-          break;
-      }
-    }
-  }
-  return null;
+// ─── 1. Domain override ────────────────────────────────────────────
+
+function byDomainOverride({ domain, categories }) {
+  const override = categories.domainOverrides?.[domain];
+  return override ? { categoryId: override } : null;
 }
 
-// ─── Step 3: YouTube Sub-classification ────────────────────────────
+// ─── 2. YouTube ────────────────────────────────────────────────────
 
 export function isYouTubeDomain(domain) {
   // extractDomain() has already stripped "www.", so only real subdomains remain.
   return domain === 'youtube.com' || domain === 'm.youtube.com';
 }
 
+function byYouTube({ domain, youtubeMeta, categories }) {
+  // Runs before rules on purpose: youtube.com matches the Entertainment rule,
+  // so checking rules first would funnel every video into Entertainment and
+  // the per-video categorization below would never run.
+  if (!isYouTubeDomain(domain) || !youtubeMeta) return null;
+  return classifyYouTube(youtubeMeta, categories);
+}
+
 /**
- * Classify a YouTube video. This is the single source of truth for YouTube
- * categorization — the content script reports raw metadata and nothing else,
- * so the keyword tables and the category mapping live in one place only.
+ * Classify a YouTube video. The single source of truth for YouTube: the
+ * content script reports raw metadata and does no guessing of its own.
  *
- * Always returns a result: YouTube time is never left uncategorized, because
+ * Always returns a result — YouTube time is never left uncategorized, because
  * we already know at minimum that it is YouTube.
  *
  * @returns {{categoryId: string, method: string}}
  */
 export function classifyYouTube(youtubeMeta, categories) {
-  // 1. Channel override — the user's explicit choice wins
   const channelOverride = youtubeMeta.channelName &&
     categories.channelOverrides?.[youtubeMeta.channelName];
   if (channelOverride) {
     return { categoryId: channelOverride, method: 'youtube_channel_override' };
   }
 
-  // 2. YouTube's own category for the video
   if (youtubeMeta.videoCategory) {
     const mapped = YOUTUBE_CATEGORY_MAP[youtubeMeta.videoCategory];
-    if (mapped) {
-      return { categoryId: mapped, method: 'youtube_category' };
-    }
+    if (mapped) return { categoryId: mapped, method: 'youtube_category' };
   }
 
-  // 3. Infer YouTube's category from the title, then map it as above
   const inferred = inferYouTubeCategoryFromTitle(youtubeMeta.videoTitle);
   if (inferred && YOUTUBE_CATEGORY_MAP[inferred]) {
     return { categoryId: YOUTUBE_CATEGORY_MAP[inferred], method: 'youtube_title_hint' };
   }
 
-  // 4. It is still YouTube
   return { categoryId: 'entertainment', method: 'youtube_default' };
 }
 
-/**
- * Guess YouTube's category name from a video title.
- * Returns '' when nothing matches.
- */
+/** Guess YouTube's own category name from a video title. */
 export function inferYouTubeCategoryFromTitle(title) {
   if (!title) return '';
   const text = title.toLowerCase();
@@ -142,11 +141,25 @@ export function inferYouTubeCategoryFromTitle(title) {
   return '';
 }
 
-// ─── Step 4: Keyword Heuristics ────────────────────────────────────
+// ─── 3. Category rules ─────────────────────────────────────────────
 
-function matchKeywords(title, metaDescription, url) {
+function byRule({ domain, url, title, categories }) {
+  // Custom first: a user's own category should win over a built-in default.
+  const all = [...(categories.custom ?? []), ...(categories.builtIn ?? [])];
+  const page = { domain, url, title };
+
+  for (const category of all) {
+    const rule = findMatchingRule(category.rules, page);
+    if (rule) return { categoryId: category.id, method: `rule:${rule.type}` };
+  }
+  return null;
+}
+
+// ─── 4. Keyword heuristics ─────────────────────────────────────────
+
+function byKeyword({ title, metaDescription, url }) {
   const text = `${title || ''} ${metaDescription || ''} ${url || ''}`.toLowerCase();
-  let bestMatch = null;
+  let best = null;
   let bestScore = 0;
 
   for (const [categoryId, keywords] of Object.entries(KEYWORD_HINTS)) {
@@ -154,57 +167,56 @@ function matchKeywords(title, metaDescription, url) {
     for (const keyword of keywords) {
       if (text.includes(keyword)) score++;
     }
+    // Two independent hits before believing a guess made from loose words.
     if (score > bestScore && score >= 2) {
-      // Require at least 2 keyword matches for confidence
       bestScore = score;
-      bestMatch = categoryId;
+      best = categoryId;
     }
   }
 
-  return bestMatch;
+  return best ? { categoryId: best } : null;
 }
 
-// ─── Step 5: Similarity Match ──────────────────────────────────────
+// ─── 5. Similarity ─────────────────────────────────────────────────
 
-async function matchSimilarity(domain, title) {
+async function bySimilarity({ domain, title }) {
   const similarityData = await storage.getAllSimilarityData();
   if (similarityData.length === 0) return null;
 
   const titleTokens = tokenize(title);
   const domainTokens = tokenize(domain.replace(/\./g, ' '));
 
-  let bestMatch = null;
+  let best = null;
   let bestScore = 0;
 
   for (const entry of similarityData) {
-    // Check exact domain match first
-    if (entry.domain === domain) {
-      return entry.categoryId;
-    }
+    if (entry.domain === domain) return { categoryId: entry.categoryId };
 
-    // Compute similarity
-    const titleSim = jaccardSimilarity(titleTokens, entry.titleTokens);
-    const domainSim = jaccardSimilarity(domainTokens, entry.domainTokens);
-    const score = titleSim * 0.6 + domainSim * 0.4;
+    const score =
+      jaccardSimilarity(titleTokens, entry.titleTokens) * 0.6 +
+      jaccardSimilarity(domainTokens, entry.domainTokens) * 0.4;
 
     if (score > bestScore && score >= SIMILARITY_THRESHOLD) {
       bestScore = score;
-      bestMatch = entry.categoryId;
+      best = entry.categoryId;
     }
   }
 
-  return bestMatch;
+  return best ? { categoryId: best } : null;
 }
 
+// ─── Learning ──────────────────────────────────────────────────────
+
 /**
- * Record a user's manual categorization for future similarity matching.
+ * Record an exemplar for similarity matching.
  *
- * The entry ID is the domain itself, so re-categorizing a site overwrites its
+ * The entry ID is the domain, so re-categorizing a site overwrites its
  * previous entry instead of appending another row. With random IDs this store
- * grew without bound and every classification did a linear Jaccard scan over
- * the accumulated duplicates.
+ * grew without bound and every classification scanned the accumulated
+ * duplicates.
  */
 export async function learnFromUserCategorization(domain, title, categoryId) {
+  if (!domain || !categoryId) return;
   await storage.saveSimilarityEntry({
     id: domain,
     domain,
@@ -213,4 +225,28 @@ export async function learnFromUserCategorization(domain, title, categoryId) {
     categoryId,
     createdAt: Date.now(),
   });
+}
+
+/**
+ * Teach the similarity engine from a newly created category.
+ *
+ * Without this a custom category only ever matches the literal strings in its
+ * rules: naming a category "Research" and giving arxiv.org as an example
+ * matched arxiv.org and nothing else, which is not what giving an example
+ * implies. Seeding an exemplar per example domain, tokenised alongside the
+ * category name, lets comparable sites be recognised on their own.
+ *
+ * @param {{id: string, name: string, rules: Array}} category
+ * @returns {Promise<number>} exemplars written
+ */
+export async function seedSimilarityFromCategory(category) {
+  const domains = exampleDomains(category?.rules);
+  if (domains.length === 0) return 0;
+
+  for (const domain of domains) {
+    // The category name stands in for a page title: it is the best available
+    // description of what the user means this category to be about.
+    await learnFromUserCategorization(domain, category.name ?? '', category.id);
+  }
+  return domains.length;
 }
