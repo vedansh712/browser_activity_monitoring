@@ -141,13 +141,19 @@ const messageHandlers = {
   [MSG.CATEGORIZE_DOMAIN]: async (message) => {
     const { domain, categoryId, title } = message.data;
 
-    // Save as domain override
+    // Steer future classification
     await storage.addDomainOverride(domain, categoryId);
 
-    // Learn for similarity matching
+    // Learn for similarity matching, so comparable sites are classified the
+    // same way without being told individually
     await learnFromUserCategorization(domain, title || '', categoryId);
 
-    // Update current session if it matches
+    // Apply to history. Without this the override only affects sessions not yet
+    // recorded, and the dashboard — built from the categoryId stored on each
+    // session — would show no change at all.
+    const updated = await storage.recategorizeDomain(domain, categoryId);
+
+    // Update the live session if it matches
     const current = await storage.getCurrentSession();
     if (current && current.domain === domain) {
       await tracker.updateSessionCategory(categoryId);
@@ -155,7 +161,7 @@ const messageHandlers = {
 
     await removeUncategorized(domain);
 
-    return { ok: true };
+    return { ok: true, sessionsUpdated: updated };
   },
 
   [MSG.GET_UNCATEGORIZED]: async () => {

@@ -347,6 +347,66 @@ export async function pruneOldData(retentionDays) {
   });
 }
 
+/**
+ * Reassign every stored session for a domain to a new category.
+ *
+ * A domain override only steers *future* classification, so on its own it
+ * leaves the dashboard unchanged — the tables and charts are built from the
+ * categoryId already written on each session record. Pressing "Reassign" and
+ * seeing nothing move is the visible symptom of that.
+ *
+ * Rewriting history is the intended behaviour here rather than a side effect:
+ * the user is stating what the domain *is*, not what it should become from now
+ * on, so the past should agree with them.
+ *
+ * @param {string} domain
+ * @param {string} categoryId
+ * @returns {Promise<number>} sessions updated
+ */
+export async function recategorizeDomain(domain, categoryId) {
+  if (typeof domain !== 'string' || !domain) {
+    throw new TypeError('recategorizeDomain requires a domain');
+  }
+  if (typeof categoryId !== 'string' || !categoryId) {
+    throw new TypeError('recategorizeDomain requires a categoryId');
+  }
+
+  const database = await openDB();
+  let updated = 0;
+
+  await new Promise((resolve, reject) => {
+    const tx = database.transaction(STORES.SESSIONS, 'readwrite');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error('Recategorize transaction aborted'));
+
+    const request = tx.objectStore(STORES.SESSIONS).index('domain').openCursor(domain);
+    request.onsuccess = (event) => {
+      const cursor = event.target.result;
+      if (!cursor) return;
+
+      if (cursor.value.categoryId !== categoryId) {
+        cursor.update({ ...cursor.value, categoryId });
+        updated++;
+      }
+      cursor.continue();
+    };
+  });
+
+  if (updated > 0) {
+    // Aggregates cache the old category totals, so they must be rebuilt.
+    await new Promise((resolve, reject) => {
+      const tx = database.transaction(STORES.AGGREGATES, 'readwrite');
+      tx.objectStore(STORES.AGGREGATES).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    log.info(`Recategorized ${updated} sessions for ${domain} as ${categoryId}`);
+  }
+
+  return updated;
+}
+
 // ─── Repair ────────────────────────────────────────────────────────
 
 /**
