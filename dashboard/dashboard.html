@@ -90,13 +90,19 @@
         <div class="charts-row">
           <div class="hud-panel chart-card wide">
             <div class="hud-panel-head">
-              <h3 class="hud-title" id="time-trend-title">Time Trend</h3>
+              <h3 class="hud-title" id="time-trend-title">Day Timeline</h3>
               <span class="hud-label" id="time-trend-sub">LOCAL TIME</span>
             </div>
-            <div class="chart-wrap">
+
+            <!-- Daily: what was visited, in order. Weekly/monthly: per-day trend.
+                 The two never show the same thing, which the previous hourly
+                 chart did — it duplicated the histogram below it exactly. -->
+            <div class="chart-wrap" id="trend-chart-wrap" hidden>
               <canvas id="time-trend-chart"></canvas>
               <p class="hud-empty" id="time-trend-chart-empty" hidden>NO DATA FOR THIS PERIOD</p>
             </div>
+
+            <div class="timeline" id="day-timeline"></div>
           </div>
 
           <div class="hud-panel chart-card">

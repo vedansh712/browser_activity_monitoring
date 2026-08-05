@@ -12,6 +12,7 @@ import {
   countContextSwitches,
   computeDelta,
   previousPeriod,
+  buildBlocks,
 } from '../shared/metrics.js';
 import { createCategoryRegistry } from '../shared/category-registry.js';
 import { html, render, cssColor } from '../shared/html.js';
@@ -430,38 +431,47 @@ function hourLabel(hour) {
   return hour < 12 ? `${hour}am` : `${hour - 12}pm`;
 }
 
+/**
+ * Top panel: a timeline of the day, or a per-day trend for longer ranges.
+ *
+ * Daily view previously drew an hourly histogram here, which was the same
+ * numbers as the "Activity by Hour" panel below it rendered a second way. The
+ * timeline answers what that histogram cannot: what was actually visited, in
+ * what order, and where the unbroken stretches were.
+ */
 function renderTimeTrendChart(aggregates, sessions) {
   const isDaily = currentRange === RANGES.DAILY;
   const t = chartTheme();
 
-  setText('time-trend-title', isDaily ? 'Time by Hour' : 'Time Trend');
+  setText('time-trend-title', isDaily ? 'Day Timeline' : 'Time Trend');
   setText('time-trend-sub', isDaily ? 'LOCAL TIME' : 'PER DAY');
 
-  let labels;
-  let minutes;
+  document.getElementById('trend-chart-wrap').hidden = isDaily;
+  document.getElementById('day-timeline').hidden = !isDaily;
 
   if (isDaily) {
-    // Buckets by hour of the day. This previously mapped a date to
-    // date.getHours() — always 0 — so a single day rendered one bar at 0:00.
-    const buckets = bucketSessionsByHour(sessions);
-    labels = Array.from({ length: HOURS_PER_DAY }, (_, h) => hourLabel(h));
-    minutes = buckets.map((ms) => Math.round(ms / 60000));
-  } else {
-    const { start, end } = getDateRangeForView();
-    const byDate = new Map(aggregates.map((a) => [a.date, a]));
-    const dates = getDateRange(start, end);
-    labels = dates.map((d) =>
-      new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    );
-    minutes = dates.map((d) => Math.round((byDate.get(d)?.totalTime ?? 0) / 60000));
+    // Release the chart: its canvas is hidden and Chart.js keeps the
+    // registration alive until the instance is destroyed.
+    chartInstances.get('time-trend-chart')?.destroy();
+    chartInstances.delete('time-trend-chart');
+    renderDayTimeline(sessions);
+    return;
   }
+
+  const { start, end } = getDateRangeForView();
+  const byDate = new Map(aggregates.map((a) => [a.date, a]));
+  const dates = getDateRange(start, end);
+  const labels = dates.map((d) =>
+    new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  );
+  const minutes = dates.map((d) => Math.round((byDate.get(d)?.totalTime ?? 0) / 60000));
 
   const isEmpty = minutes.every((m) => m === 0);
   setChartEmpty('time-trend-chart', isEmpty);
   if (isEmpty) return;
 
   replaceChart('time-trend-chart', {
-    type: isDaily ? 'bar' : 'line',
+    type: 'line',
     data: {
       labels,
       datasets: [{
@@ -469,15 +479,81 @@ function renderTimeTrendChart(aggregates, sessions) {
         data: minutes,
         backgroundColor: `color-mix(in srgb, ${t.accent} 55%, transparent)`,
         borderColor: t.accent,
-        borderWidth: isDaily ? 0 : 2,
+        borderWidth: 2,
         pointBackgroundColor: t.accent,
-        pointRadius: isDaily ? 0 : 2,
+        pointRadius: 2,
         fill: true,
         tension: 0.35,
       }],
     },
     options: baseChartOptions(t, (ctx) => formatDuration(ctx.raw * 60000), '%sm'),
   });
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** HH:MM in local time. */
+function clockLabel(timestamp) {
+  const d = new Date(timestamp);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/**
+ * A ribbon of the day: one block per stretch of attention, positioned by when
+ * it happened and sized by how long it lasted.
+ *
+ * Built from metrics blocks rather than raw sessions, because the flush alarm
+ * splits a single visit into a row every few minutes — drawing those directly
+ * would render one continuous hour of reading as a dotted line of fragments.
+ */
+function renderDayTimeline(sessions) {
+  const container = document.getElementById('day-timeline');
+  const blocks = buildBlocks(sessions);
+
+  if (blocks.length === 0) {
+    render(container, html`<p class="hud-empty">NO DATA FOR THIS PERIOD</p>`);
+    return;
+  }
+
+  const { start } = getDateRangeForView();
+  const dayStart = new Date(`${start}T00:00:00`).getTime();
+
+  const longest = blocks.reduce((max, b) => Math.max(max, b.duration), 0);
+
+  // Categories actually present, so the legend explains only what is on screen.
+  const present = [...new Set(blocks.map((b) => b.categoryId))];
+
+  render(container, html`
+    <div class="timeline-track">
+      ${blocks.map((block) => {
+        const offset = Math.min(100, Math.max(0, ((block.startTime - dayStart) / DAY_MS) * 100));
+        // A minimum width keeps brief visits visible; at this scale a single
+        // minute is well under a pixel.
+        const width = Math.max(0.3, Math.min(100 - offset, (block.duration / DAY_MS) * 100));
+        const colour = cssColor(categories.get(block.categoryId).color);
+        return html`<div class="timeline-block"
+             style="left:${offset.toFixed(3)}%;width:${width.toFixed(3)}%;--block:${colour}">
+          <span class="tooltip">${block.domain} · ${formatDuration(block.duration)} · ${clockLabel(block.startTime)}</span>
+        </div>`;
+      })}
+    </div>
+
+    <div class="timeline-scale">
+      ${Array.from({ length: 9 }, (_, i) => html`<span class="hud-label">${String(i * 3).padStart(2, '0')}</span>`)}
+    </div>
+
+    <div class="timeline-footer">
+      <div class="timeline-legend">
+        ${present.map((id) => {
+          const cat = categories.get(id);
+          return html`<span class="legend-item">
+            <i style="background:${cssColor(cat.color)}"></i>${cat.name}
+          </span>`;
+        })}
+      </div>
+      <span class="hud-label">${blocks.length} BLOCKS · LONGEST ${formatDuration(longest)}</span>
+    </div>
+  `);
 }
 
 function baseChartOptions(t, tooltipLabel, tickSuffix) {
