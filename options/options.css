@@ -313,3 +313,61 @@ body { min-height: 100vh; }
   .setting-row { flex-direction: column; align-items: flex-start; }
   .options-container { padding: var(--sp-4) var(--sp-3) 110px; }
 }
+
+/* ═══ Dynamic accent preview ════════════════════════════════════ */
+
+.accent-mode { flex-shrink: 0; }
+
+#accent-fixed-panel[hidden],
+#accent-dynamic-panel[hidden] { display: none; }
+
+.gradient-preview { margin: var(--sp-4) 0 var(--sp-2); position: relative; }
+
+/* The bar is painted from the same HSL endpoints the JS interpolates
+   between, so the preview cannot drift from the real ramp. */
+.gradient-bar {
+  height: 10px;
+  background: linear-gradient(
+    90deg,
+    hsl(140, 88%, 58%),
+    hsl(160, 88%, 58%),
+    hsl(180, 88%, 58%),
+    hsl(200, 88%, 58%),
+    hsl(220, 88%, 58%)
+  );
+}
+
+/* Where today's tracked time currently sits on the ramp. */
+.gradient-marker {
+  position: absolute;
+  top: -4px;
+  left: 0;
+  transform: translateX(-50%);
+  transition: left .4s ease;
+  pointer-events: none;
+}
+
+.gradient-marker span {
+  display: block;
+  width: 3px;
+  height: 18px;
+  background: var(--ink);
+  box-shadow: 0 0 6px rgba(0, 0, 0, .8);
+}
+
+.gradient-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+
+.dynamic-now {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ink-3);
+  padding: 10px 13px;
+  margin-top: var(--sp-3);
+  background: rgba(255, 255, 255, 0.02);
+  border-left: 2px solid var(--accent);
+}

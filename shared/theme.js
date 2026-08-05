@@ -1,4 +1,11 @@
-import { DEFAULT_ACCENT, STORAGE_KEYS } from './constants.js';
+import {
+  DEFAULT_ACCENT,
+  STORAGE_KEYS,
+  ACCENT_MODES,
+  ACCENT_GRADIENT,
+  ACCENT_SPAN_LIMITS,
+  MSG,
+} from './constants.js';
 
 /**
  * Runtime theming.
@@ -103,6 +110,101 @@ export function foregroundFor(accent) {
   return onDark >= onLight ? DARK_FOREGROUND : LIGHT_FOREGROUND;
 }
 
+// ─── Dynamic accent ────────────────────────────────────────────────
+
+/**
+ * Convert HSL to a hex colour.
+ *
+ * @param {number} h - hue in degrees
+ * @param {number} s - saturation 0..100
+ * @param {number} l - lightness 0..100
+ * @returns {string} '#rrggbb'
+ */
+export function hslToHex(h, s, l) {
+  const sat = clamp(s, 0, 100) / 100;
+  const light = clamp(l, 0, 100) / 100;
+  // Normalise hue into [0, 360) so wrap-around input still works.
+  const hue = ((h % 360) + 360) % 360;
+
+  const a = sat * Math.min(light, 1 - light);
+  const channel = (n) => {
+    const k = (n + hue / 30) % 12;
+    const value = light - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1)));
+    return Math.round(255 * value).toString(16).padStart(2, '0');
+  };
+
+  return `#${channel(0)}${channel(8)}${channel(4)}`;
+}
+
+function clamp(value, min, max) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * The accent for a given position along the gradient.
+ *
+ * Only hue is interpolated; saturation and lightness stay fixed, so every
+ * point on the ramp has the same weight against the dark surfaces and the
+ * interface does not appear to brighten or fade as the day goes on.
+ *
+ * @param {number} fraction - 0 (start of ramp) to 1 (end)
+ * @param {Object} [gradient]
+ * @returns {string} hex colour
+ */
+export function accentForProgress(fraction, gradient = ACCENT_GRADIENT) {
+  const t = clamp(fraction, 0, 1);
+  const hue = gradient.fromHue + (gradient.toHue - gradient.fromHue) * t;
+  return hslToHex(hue, gradient.saturation, gradient.lightness);
+}
+
+/**
+ * The accent representing a tracked duration.
+ *
+ * @param {number} totalMs   - time tracked today
+ * @param {number} spanHours - hours at which the ramp reaches its far end
+ * @returns {string} hex colour
+ */
+export function accentForDuration(totalMs, spanHours) {
+  const hours = clamp(spanHours, ACCENT_SPAN_LIMITS.min, ACCENT_SPAN_LIMITS.max);
+  const spanMs = hours * 60 * 60 * 1000;
+  const elapsed = Number(totalMs) > 0 ? Number(totalMs) : 0;
+  return accentForProgress(elapsed / spanMs);
+}
+
+/**
+ * Resolve the accent a settings object implies.
+ *
+ * @param {Object} settings
+ * @param {number} totalMs - today's tracked time; ignored in fixed mode
+ * @returns {string} hex colour
+ */
+export function resolveAccent(settings = {}, totalMs = 0) {
+  if (settings.accentMode === ACCENT_MODES.DYNAMIC) {
+    return accentForDuration(totalMs, settings.accentSpanHours ?? ACCENT_SPAN_LIMITS.fallback);
+  }
+  return normalizeAccent(settings.accentColor);
+}
+
+/**
+ * Today's total tracked time, including the session currently running.
+ * Returns 0 if the background worker cannot be reached.
+ */
+export async function fetchTodayTotalMs() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: MSG.GET_TODAY_STATS });
+    if (!response || response.error) return 0;
+
+    let total = response.aggregate?.totalTime ?? 0;
+    if (response.currentSession?.isActive) {
+      total += Date.now() - response.currentSession.startTime;
+    }
+    return total;
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * Write the accent onto a root element.
  *
@@ -117,33 +219,66 @@ export function applyAccent(accent, root = document.documentElement) {
   return colour;
 }
 
+/** Last settings seen, so refreshAccent() can re-resolve without re-reading. */
+let activeSettings = null;
+
 /**
- * Apply the stored accent and keep it in sync.
+ * Apply the accent implied by stored settings, and keep it in sync.
  *
- * Listening for storage changes means picking a colour in options updates an
- * open dashboard live, with no reload and no message plumbing.
+ * Listening for storage changes means changing the colour in options updates
+ * an already-open dashboard live, with no reload and no message plumbing.
  *
  * @param {HTMLElement} [root]
  * @returns {Promise<string>} the applied colour
  */
 export async function initTheme(root = document.documentElement) {
-  let applied = DEFAULT_ACCENT;
-
   try {
     const stored = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS);
-    applied = applyAccent(stored[STORAGE_KEYS.SETTINGS]?.accentColor, root);
+    activeSettings = stored[STORAGE_KEYS.SETTINGS] ?? {};
   } catch {
     // Storage unavailable — the CSS default already provides a usable theme.
-    applied = applyAccent(DEFAULT_ACCENT, root);
+    activeSettings = {};
   }
+
+  const totalMs = activeSettings.accentMode === ACCENT_MODES.DYNAMIC
+    ? await fetchTodayTotalMs()
+    : 0;
+
+  const applied = applyAccent(resolveAccent(activeSettings, totalMs), root);
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !changes[STORAGE_KEYS.SETTINGS]) return;
-    const next = changes[STORAGE_KEYS.SETTINGS].newValue?.accentColor;
-    if (next) applyAccent(next, root);
+    const next = changes[STORAGE_KEYS.SETTINGS].newValue;
+    if (!next) return;
+    activeSettings = next;
+    // Re-resolving needs the current total, which is async; fire and forget so
+    // the storage listener stays synchronous.
+    refreshAccent(root).catch(() => {});
   });
 
   return applied;
+}
+
+/**
+ * Re-resolve and apply the accent.
+ *
+ * In dynamic mode the colour depends on elapsed time, so callers that already
+ * know today's total can pass it and skip the round trip — the popup and
+ * dashboard both have it to hand after loading their stats.
+ *
+ * @param {HTMLElement} [root]
+ * @param {number} [knownTotalMs]
+ * @returns {Promise<string>} the applied colour
+ */
+export async function refreshAccent(root = document.documentElement, knownTotalMs = null) {
+  const settings = activeSettings ?? {};
+
+  if (settings.accentMode !== ACCENT_MODES.DYNAMIC) {
+    return applyAccent(resolveAccent(settings), root);
+  }
+
+  const totalMs = knownTotalMs ?? await fetchTodayTotalMs();
+  return applyAccent(resolveAccent(settings, totalMs), root);
 }
 
 /**

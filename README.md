@@ -10,7 +10,9 @@ Everything runs and stays on your machine. The extension makes **no network requ
 - **Automatic categorisation** — domain rules, keyword heuristics, similarity matching against your own past choices, and optional on-device AI
 - **YouTube analytics** — per-video watch time, channel breakdown, and content categories, including single-page navigation between videos
 - **Dashboard** — daily / weekly / monthly views, hourly activity heatmap, sortable domain table, CSV export
+- **Focus score** — how concentrated your attention was, from time in sustained blocks, how often you switched, and how widely you spread
 - **Custom categories** — create your own, with colours and domain rules
+- **Themeable HUD interface** — pick any accent colour, or let it shift from green through cyan to blue as your tracked time builds through the day
 
 ## Install (development)
 
@@ -59,6 +61,9 @@ content-scripts/
 | `shared/data-models.js` | Session lifecycle and daily aggregation. All time arithmetic lives here. |
 | `shared/category-registry.js` | Single lookup over built-in + custom categories, used by every UI. |
 | `shared/html.js` | `html\`\`` tagged template that escapes by default; `render()` rejects unescaped strings. |
+| `shared/theme.css` | Design tokens and HUD primitives. Only `--accent` is authored; every variant derives from it with `color-mix()`. |
+| `shared/theme.js` | Resolves and applies the accent, including the time-driven gradient, and picks a readable foreground from the colour's luminance. |
+| `shared/metrics.js` | Focus score, context switches, period-over-period deltas. Pure functions of a session list. |
 | `background/aggregate-service.js` | Read-through cache over daily aggregates, with staleness validation. |
 | `background/ai-classifier.js` | On-device classification with constrained decoding and prompt-injection defences. |
 | `background/storage-manager.js` | The only module that touches IndexedDB and `chrome.storage`. |

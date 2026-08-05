@@ -4,11 +4,23 @@ import {
   LOG_LEVELS,
   MSG,
 } from '../shared/constants.js';
-import { AI_STATUS, ACCENT_PRESETS, DEFAULT_ACCENT } from '../shared/constants.js';
-import { clampInt } from '../shared/utils.js';
+import {
+  AI_STATUS,
+  ACCENT_PRESETS,
+  ACCENT_MODES,
+  ACCENT_SPAN_LIMITS,
+  DEFAULT_ACCENT,
+} from '../shared/constants.js';
+import { clampInt, formatDuration } from '../shared/utils.js';
 import { html, render, cssColor } from '../shared/html.js';
 import { createCategoryRegistry } from '../shared/category-registry.js';
-import { initTheme, applyAccent, normalizeAccent } from '../shared/theme.js';
+import {
+  initTheme,
+  applyAccent,
+  normalizeAccent,
+  accentForDuration,
+  fetchTodayTotalMs,
+} from '../shared/theme.js';
 import { createLogger } from '../shared/logger.js';
 import * as storage from '../background/storage-manager.js';
 import { aiClassifier } from '../background/container.js';
@@ -99,6 +111,20 @@ function renderAll() {
  * every one of those events would hammer it for no benefit.
  */
 function renderAccent() {
+  const isDynamic = settings.accentMode === ACCENT_MODES.DYNAMIC;
+
+  document.querySelectorAll('.accent-mode button').forEach((btn) => {
+    btn.classList.toggle('is-active', (btn.dataset.mode === ACCENT_MODES.DYNAMIC) === isDynamic);
+  });
+
+  document.getElementById('accent-fixed-panel').hidden = isDynamic;
+  document.getElementById('accent-dynamic-panel').hidden = !isDynamic;
+
+  document.getElementById('accent-span').value =
+    settings.accentSpanHours ?? ACCENT_SPAN_LIMITS.fallback;
+
+  if (isDynamic) renderDynamicPreview();
+
   const current = normalizeAccent(settings.accentColor ?? DEFAULT_ACCENT);
 
   document.getElementById('accent-color').value = current;
@@ -115,6 +141,34 @@ function renderAccent() {
   `)}`);
 
   bindAll(container, '.preset', 'click', (btn) => selectAccent(btn.dataset.color, true));
+}
+
+/**
+ * Show where today's tracked time currently sits on the gradient, and update
+ * the scale labels to match the configured span.
+ */
+async function renderDynamicPreview() {
+  const span = clampInt(
+    document.getElementById('accent-span').value ?? settings.accentSpanHours,
+    ACCENT_SPAN_LIMITS
+  );
+
+  document.getElementById('gradient-mid').textContent = `${(span / 2).toFixed(span % 2 ? 1 : 0)}h`;
+  document.getElementById('gradient-end').textContent = `${span}h+`;
+
+  const totalMs = await fetchTodayTotalMs();
+  const spanMs = span * 60 * 60 * 1000;
+  const fraction = Math.min(1, totalMs / spanMs);
+
+  document.getElementById('gradient-marker').style.left = `${(fraction * 100).toFixed(1)}%`;
+
+  const colour = accentForDuration(totalMs, span);
+  document.getElementById('dynamic-now').textContent =
+    `Today: ${formatDuration(totalMs)} tracked · currently ${colour.toUpperCase()}` +
+    (fraction >= 1 ? ' (at the end of the scale)' : '');
+
+  // Apply it so the page previews the mode it is describing.
+  applyAccent(colour);
 }
 
 /** Preview the colour on this page without writing to storage. */
@@ -136,6 +190,35 @@ async function selectAccent(value, rerender = false) {
       document.getElementById('accent-color').value = colour;
       markActivePreset(colour);
     }
+  });
+}
+
+/** Switch between a fixed colour and the time-driven ramp. */
+async function selectAccentMode(mode) {
+  if (mode !== ACCENT_MODES.FIXED && mode !== ACCENT_MODES.DYNAMIC) return;
+
+  settings.accentMode = mode;
+
+  await withErrorReporting('change colour mode', async () => {
+    await storage.saveSettings(settings);
+    renderAccent();
+    // In fixed mode the stored colour has to be re-applied, since the dynamic
+    // preview may have left a computed one on the page.
+    if (mode === ACCENT_MODES.FIXED) applyAccent(settings.accentColor);
+    showStatus(mode === ACCENT_MODES.DYNAMIC ? 'Colour now follows your tracked time' : 'Using a fixed colour');
+  });
+}
+
+async function saveAccentSpan() {
+  settings.accentSpanHours = clampInt(
+    document.getElementById('accent-span').value,
+    ACCENT_SPAN_LIMITS
+  );
+  document.getElementById('accent-span').value = settings.accentSpanHours;
+
+  await withErrorReporting('save colour range', async () => {
+    await storage.saveSettings(settings);
+    await renderDynamicPreview();
   });
 }
 
@@ -409,6 +492,14 @@ function setupEventListeners() {
   wheel.addEventListener('input', (e) => previewAccent(e.target.value));
   // `change` fires once the picker closes — that is when it is worth storing.
   wheel.addEventListener('change', (e) => selectAccent(e.target.value));
+
+  document.querySelectorAll('.accent-mode button').forEach((btn) => {
+    btn.addEventListener('click', () => selectAccentMode(btn.dataset.mode));
+  });
+
+  const span = document.getElementById('accent-span');
+  span.addEventListener('input', () => renderDynamicPreview());
+  span.addEventListener('change', () => saveAccentSpan());
 
   document.getElementById('ai-download').addEventListener('click', downloadModel);
 

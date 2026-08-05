@@ -15,7 +15,7 @@ import {
 } from '../shared/metrics.js';
 import { createCategoryRegistry } from '../shared/category-registry.js';
 import { html, render, cssColor } from '../shared/html.js';
-import { initTheme, themeColor } from '../shared/theme.js';
+import { initTheme, refreshAccent, themeColor } from '../shared/theme.js';
 import { toCsv } from '../shared/csv.js';
 import { createLogger } from '../shared/logger.js';
 import * as storage from '../background/storage-manager.js';
@@ -29,6 +29,9 @@ const TOP_CHANNELS = 8;
 const MAX_VIDEO_ROWS = 50;
 const CHANNEL_LABEL_MAX = 20;
 const SPARK_DAYS = 7;
+
+/** How often the dynamic accent re-checks elapsed time while the tab is open. */
+const ACCENT_REFRESH_MS = 60_000;
 
 /** Circumference of the focus gauge arc (r=56), for stroke-dashoffset. */
 const GAUGE_CIRCUMFERENCE = 2 * Math.PI * 56;
@@ -67,6 +70,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes.settings) loadData();
   });
+
+  // The dashboard is left open for long stretches; in dynamic mode the accent
+  // should drift as the day accumulates rather than freezing at page load.
+  setInterval(() => {
+    refreshAccent().catch(() => {});
+  }, ACCENT_REFRESH_MS);
 
   await loadData();
 });

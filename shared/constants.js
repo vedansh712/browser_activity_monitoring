@@ -57,6 +57,36 @@ export const MIN_IDLE_THRESHOLD_SECONDS = 15;
  */
 export const DEFAULT_ACCENT = '#ff2b4a';
 
+/**
+ * Accent modes.
+ *
+ * 'fixed'   — the colour the user picked, always.
+ * 'dynamic' — derived from how long they have browsed today, so the interface
+ *             itself becomes an ambient readout: green early in the day,
+ *             drifting through teal and cyan to blue as the hours accumulate.
+ */
+export const ACCENT_MODES = Object.freeze({ FIXED: 'fixed', DYNAMIC: 'dynamic' });
+
+/**
+ * Endpoints of the dynamic gradient, in HSL.
+ *
+ * Interpolating hue from 140° to 220° passes through spring green, teal and
+ * cyan on the way to azure — a continuous ramp rather than a jump between two
+ * colours. Saturation and lightness are held constant so only hue changes,
+ * which keeps every step equally readable against the dark surfaces.
+ */
+export const ACCENT_GRADIENT = Object.freeze({
+  fromHue: 140,
+  toHue: 220,
+  saturation: 88,
+  lightness: 58,
+});
+
+/** Tracked hours at which the dynamic accent reaches the far end of the ramp. */
+export const DEFAULT_ACCENT_SPAN_HOURS = 8;
+
+export const ACCENT_SPAN_LIMITS = Object.freeze({ min: 1, max: 24, fallback: DEFAULT_ACCENT_SPAN_HOURS });
+
 /** Curated starting points; the picker also allows any colour. */
 export const ACCENT_PRESETS = Object.freeze([
   { name: 'Crimson', value: '#ff2b4a' },
@@ -437,6 +467,8 @@ export const DEFAULT_SETTINGS = {
   retentionDays: DEFAULT_RETENTION_DAYS,
   youtubeDeepTracking: true,
   accentColor: DEFAULT_ACCENT,
+  accentMode: ACCENT_MODES.FIXED,
+  accentSpanHours: DEFAULT_ACCENT_SPAN_HOURS,
   // Off by default. Classification is on-device, but it is still inference over
   // the user's browsing data and must be an explicit choice.
   aiEnabled: false,

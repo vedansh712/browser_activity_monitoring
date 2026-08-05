@@ -3,7 +3,7 @@ import { formatDuration, formatDurationPrecise, faviconUrl, todayKey } from '../
 import { html, render, cssColor } from '../shared/html.js';
 import { createCategoryRegistry } from '../shared/category-registry.js';
 import { computeFocusScore } from '../shared/metrics.js';
-import { initTheme, themeColor } from '../shared/theme.js';
+import { initTheme, refreshAccent, themeColor } from '../shared/theme.js';
 import { createLogger } from '../shared/logger.js';
 import * as storage from '../background/storage-manager.js';
 
@@ -65,6 +65,10 @@ async function loadStats() {
       }
       totalTime.textContent = formatDuration(total);
       todayMeta.textContent = `${aggregate.sessionCount || 0} SESSIONS`;
+
+      // In dynamic mode the accent tracks today's total, and this is the one
+      // place that already knows it — passing it avoids a second round trip.
+      await refreshAccent(document.documentElement, total);
 
       renderTopDomains(aggregate.domainBreakdown || {});
       renderCategoryChart(aggregate.categoryBreakdown || {});

@@ -8,8 +8,19 @@ import {
   contrastRatio,
   foregroundFor,
   applyAccent,
+  hslToHex,
+  accentForProgress,
+  accentForDuration,
+  resolveAccent,
 } from '../shared/theme.js';
-import { DEFAULT_ACCENT, ACCENT_PRESETS } from '../shared/constants.js';
+import {
+  DEFAULT_ACCENT,
+  ACCENT_PRESETS,
+  ACCENT_MODES,
+  ACCENT_GRADIENT,
+} from '../shared/constants.js';
+
+const HOUR = 60 * 60 * 1000;
 
 // ─── Parsing ───────────────────────────────────────────────────────
 
@@ -129,14 +140,137 @@ test('applyAccent sanitises before writing to the style property', () => {
   assert.equal(props.get('--accent'), DEFAULT_ACCENT);
 });
 
-// ─── helper ────────────────────────────────────────────────────────
+// ─── HSL conversion ────────────────────────────────────────────────
 
-function hslToHex(h, s, l) {
-  const sat = s / 100;
-  const lig = l / 100;
-  const k = (n) => (n + h / 30) % 12;
-  const a = sat * Math.min(lig, 1 - lig);
-  const f = (n) => lig - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
-  const to = (x) => Math.round(255 * x).toString(16).padStart(2, '0');
-  return `#${to(f(0))}${to(f(8))}${to(f(4))}`;
-}
+test('hslToHex matches known conversions', () => {
+  assert.equal(hslToHex(0, 100, 50), '#ff0000');
+  assert.equal(hslToHex(120, 100, 50), '#00ff00');
+  assert.equal(hslToHex(240, 100, 50), '#0000ff');
+  assert.equal(hslToHex(0, 0, 100), '#ffffff');
+  assert.equal(hslToHex(0, 0, 0), '#000000');
+});
+
+test('hslToHex wraps hue and clamps out-of-range input', () => {
+  assert.equal(hslToHex(360, 100, 50), hslToHex(0, 100, 50));
+  assert.equal(hslToHex(480, 100, 50), hslToHex(120, 100, 50));
+  assert.equal(hslToHex(-120, 100, 50), hslToHex(240, 100, 50));
+  assert.equal(hslToHex(0, 500, 50), hslToHex(0, 100, 50));
+});
+
+test('hslToHex always produces a parseable colour', () => {
+  for (let h = 0; h < 360; h += 7) {
+    assert.ok(parseHexColor(hslToHex(h, 88, 58)), `hue ${h} produced junk`);
+  }
+});
+
+// ─── Dynamic gradient ──────────────────────────────────────────────
+
+test('the ramp runs from green to blue', () => {
+  const start = parseHexColor(accentForProgress(0));
+  const end = parseHexColor(accentForProgress(1));
+
+  assert.ok(start.g > start.b, 'start should be green-dominant');
+  assert.ok(end.b > end.g, 'end should be blue-dominant');
+});
+
+test('the ramp passes through cyan rather than jumping', () => {
+  // Midway between hue 140 and 220 is 180 — cyan, where green and blue match.
+  const mid = parseHexColor(accentForProgress(0.5));
+  assert.ok(Math.abs(mid.g - mid.b) < 30, `midpoint should be cyan-ish, got ${JSON.stringify(mid)}`);
+});
+
+test('the ramp is continuous with no sudden jumps', () => {
+  // "Every colour in between" means adjacent steps must be close together.
+  let previous = parseHexColor(accentForProgress(0));
+  for (let i = 1; i <= 50; i++) {
+    const current = parseHexColor(accentForProgress(i / 50));
+    const jump = Math.max(
+      Math.abs(current.r - previous.r),
+      Math.abs(current.g - previous.g),
+      Math.abs(current.b - previous.b)
+    );
+    assert.ok(jump < 30, `discontinuity at step ${i}: jump of ${jump}`);
+    previous = current;
+  }
+});
+
+test('progress is clamped outside 0..1', () => {
+  assert.equal(accentForProgress(-5), accentForProgress(0));
+  assert.equal(accentForProgress(99), accentForProgress(1));
+  assert.equal(accentForProgress(NaN), accentForProgress(0));
+});
+
+test('every colour on the ramp stays legible', () => {
+  // The whole ramp has to work, not just the endpoints.
+  for (let i = 0; i <= 20; i++) {
+    const colour = accentForProgress(i / 20);
+    const ratio = contrastRatio(colour, foregroundFor(colour));
+    assert.ok(ratio >= 4.5, `${colour} only reaches ${ratio.toFixed(2)}:1`);
+  }
+});
+
+// ─── Duration mapping ──────────────────────────────────────────────
+
+test('duration maps onto the ramp across the configured span', () => {
+  const span = 8;
+  assert.equal(accentForDuration(0, span), accentForProgress(0));
+  assert.equal(accentForDuration(4 * HOUR, span), accentForProgress(0.5));
+  assert.equal(accentForDuration(8 * HOUR, span), accentForProgress(1));
+});
+
+test('time beyond the span stays at the far end rather than wrapping', () => {
+  // Wrapping past blue would send the colour back through purple to red,
+  // making a heavy day look identical to a light one.
+  assert.equal(accentForDuration(40 * HOUR, 8), accentForProgress(1));
+});
+
+test('negative or junk durations resolve to the start of the ramp', () => {
+  for (const bad of [-1, NaN, null, undefined, 'abc']) {
+    assert.equal(accentForDuration(bad, 8), accentForProgress(0));
+  }
+});
+
+test('the span is clamped to a sane range', () => {
+  // A zero or negative span would divide by zero and produce Infinity.
+  assert.ok(parseHexColor(accentForDuration(HOUR, 0)));
+  assert.ok(parseHexColor(accentForDuration(HOUR, -3)));
+  assert.ok(parseHexColor(accentForDuration(HOUR, 9999)));
+});
+
+// ─── Mode resolution ───────────────────────────────────────────────
+
+test('fixed mode ignores elapsed time', () => {
+  const settings = { accentMode: ACCENT_MODES.FIXED, accentColor: '#ff2b4a' };
+  assert.equal(resolveAccent(settings, 0), '#ff2b4a');
+  assert.equal(resolveAccent(settings, 99 * HOUR), '#ff2b4a');
+});
+
+test('dynamic mode ignores the fixed colour', () => {
+  const settings = {
+    accentMode: ACCENT_MODES.DYNAMIC,
+    accentColor: '#ff2b4a',
+    accentSpanHours: 8,
+  };
+  assert.notEqual(resolveAccent(settings, 0), '#ff2b4a');
+  assert.equal(resolveAccent(settings, 0), accentForProgress(0));
+  assert.equal(resolveAccent(settings, 8 * HOUR), accentForProgress(1));
+});
+
+test('an unknown or missing mode falls back to fixed', () => {
+  assert.equal(resolveAccent({ accentColor: '#21d4fd' }, 5 * HOUR), '#21d4fd');
+  assert.equal(resolveAccent({ accentMode: 'nonsense', accentColor: '#21d4fd' }, 5 * HOUR), '#21d4fd');
+  assert.equal(resolveAccent({}, 0), DEFAULT_ACCENT);
+});
+
+test('dynamic mode uses the default span when none is stored', () => {
+  const settings = { accentMode: ACCENT_MODES.DYNAMIC };
+  assert.ok(parseHexColor(resolveAccent(settings, 2 * HOUR)));
+});
+
+test('gradient endpoints are configured, not hardcoded in the function', () => {
+  const custom = { fromHue: 0, toHue: 60, saturation: 100, lightness: 50 };
+  assert.equal(accentForProgress(0, custom), hslToHex(0, 100, 50));
+  assert.equal(accentForProgress(1, custom), hslToHex(60, 100, 50));
+  assert.equal(ACCENT_GRADIENT.fromHue, 140);
+});
+

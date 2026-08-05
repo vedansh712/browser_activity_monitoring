@@ -21,16 +21,58 @@
 
       <div class="setting-row">
         <div class="setting-info">
-          <label for="accent-color">Accent Colour</label>
-          <p>Applies instantly to the popup, dashboard and this page.</p>
+          <label>Colour Mode</label>
+          <p>Use one colour, or let it shift as you browse.</p>
         </div>
-        <div class="accent-control">
-          <input type="color" id="accent-color" class="accent-wheel" aria-label="Choose accent colour">
-          <code class="accent-hex hud-num" id="accent-hex">#ff2b4a</code>
+        <div class="hud-seg accent-mode">
+          <button data-mode="fixed" class="is-active">Fixed</button>
+          <button data-mode="dynamic">By Time</button>
         </div>
       </div>
 
-      <div class="accent-presets" id="accent-presets"></div>
+      <!-- Fixed mode -->
+      <div id="accent-fixed-panel">
+        <div class="setting-row">
+          <div class="setting-info">
+            <label for="accent-color">Accent Colour</label>
+            <p>Applies instantly to the popup, dashboard and this page.</p>
+          </div>
+          <div class="accent-control">
+            <input type="color" id="accent-color" class="accent-wheel" aria-label="Choose accent colour">
+            <code class="accent-hex hud-num" id="accent-hex">#ff2b4a</code>
+          </div>
+        </div>
+        <div class="accent-presets" id="accent-presets"></div>
+      </div>
+
+      <!-- Dynamic mode -->
+      <div id="accent-dynamic-panel" hidden>
+        <p class="section-desc">
+          The interface shifts from green through teal and cyan to blue as your tracked time
+          builds up over the day &mdash; so the colour itself tells you how long you&rsquo;ve been
+          browsing, before you read a single number.
+        </p>
+
+        <div class="gradient-preview">
+          <div class="gradient-bar" id="gradient-bar"></div>
+          <div class="gradient-marker" id="gradient-marker"><span></span></div>
+          <div class="gradient-scale">
+            <span class="hud-label">0h</span>
+            <span class="hud-label" id="gradient-mid">4h</span>
+            <span class="hud-label" id="gradient-end">8h+</span>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <label for="accent-span">Full Range After (hours)</label>
+            <p>How much tracked time reaches the blue end of the scale.</p>
+          </div>
+          <input type="number" id="accent-span" min="1" max="24" value="8" class="hud-input is-narrow">
+        </div>
+
+        <div class="dynamic-now" id="dynamic-now"></div>
+      </div>
     </section>
 
     <!-- General Settings -->
