@@ -1,12 +1,27 @@
 import { generateId, formatDate, extractDomain } from './utils.js';
+import { MAX_TRACKED_INTERVAL_MS } from './constants.js';
+
+/*
+ * Session timing model
+ * ────────────────────
+ * `duration`  — banked milliseconds from intervals that have already closed.
+ * `startTime` — when the currently-running interval began.
+ * `isActive`  — whether the clock is running.
+ *
+ * Elapsed time is always `duration + (now - startTime)` while active, and just
+ * `duration` while paused. Every transition banks the open interval before
+ * changing state, which makes pause/resume/end idempotent: calling pause twice
+ * can't double-count, and ending a paused session can't lose its banked time.
+ */
 
 /**
  * Create a new session record.
  */
-export function createSession({ url, title, categoryId, meta = null }) {
+export function createSession({ url, title, categoryId, tabId = null, meta = null }) {
   const now = Date.now();
   return {
     id: generateId(),
+    tabId,
     url: url || '',
     domain: extractDomain(url),
     title: title || '',
@@ -21,29 +36,79 @@ export function createSession({ url, title, categoryId, meta = null }) {
 }
 
 /**
- * End a session — compute duration.
+ * How much of an elapsed interval may be counted as real browsing.
+ *
+ * Returns the interval when a heartbeat vouches for it, and zero when it is
+ * too long to have happened while the machine was awake. Discarding rather
+ * than clamping is deliberate: clamping still credits time nobody spent, and
+ * a handful of sleeps a day adds up to an hour of invented browsing.
+ *
+ * @param {number} elapsedMs
+ * @param {number} [maxMs]
+ * @returns {number}
+ */
+export function creditableInterval(elapsedMs, maxMs = MAX_TRACKED_INTERVAL_MS) {
+  if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return 0;
+  return elapsedMs <= maxMs ? elapsedMs : 0;
+}
+
+/**
+ * Total elapsed time for a session, including the currently-open interval.
+ *
+ * The open interval is clamped to MAX_TRACKED_INTERVAL_MS: if more time has
+ * passed than the flush alarm allows for, the machine was asleep rather than
+ * the user browsing, and that gap must not be counted.
+ */
+export function sessionElapsed(session, now = Date.now()) {
+  if (!session) return 0;
+  const banked = session.duration || 0;
+  if (!session.isActive) return banked;
+  // Math.max guards against the wall clock moving backwards (NTP, DST, manual change).
+  const open = Math.max(0, now - session.startTime);
+  return banked + creditableInterval(open);
+}
+
+/**
+ * End a session — bank the open interval and stop the clock.
+ *
+ * `date` is re-stamped from the end time so that a session which crosses
+ * midnight is filed under the day its time actually landed in. Combined with
+ * 5-minute flushing this keeps midnight misattribution under one flush period.
  */
 export function endSession(session) {
-  if (!session || !session.isActive) return session;
+  if (!session) return session;
   const now = Date.now();
   return {
     ...session,
     endTime: now,
-    duration: now - session.startTime,
+    duration: sessionElapsed(session, now),
     isActive: false,
+    date: formatDate(new Date(now)),
   };
 }
 
 /**
- * Pause a session — store partial duration but keep it active.
+ * Pause a session — bank the open interval and stop the clock.
  */
 export function pauseSession(session) {
   if (!session || !session.isActive) return session;
   const now = Date.now();
   return {
     ...session,
-    duration: (session.duration || 0) + (now - session.startTime),
-    startTime: now, // reset for next resume
+    duration: sessionElapsed(session, now),
+    isActive: false,
+  };
+}
+
+/**
+ * Resume a paused session — restart the clock without touching banked time.
+ */
+export function resumeSession(session) {
+  if (!session || session.isActive) return session;
+  return {
+    ...session,
+    startTime: Date.now(),
+    isActive: true,
   };
 }
 
@@ -135,16 +200,30 @@ export function buildAggregate(dateStr, sessions) {
   return agg;
 }
 
+export const HOURS_PER_DAY = 24;
+
 /**
- * Create a similarity data entry from a user-categorized page.
+ * Total tracked milliseconds per hour of the day.
+ *
+ * Each session is attributed to the hour it started in. That is accurate in
+ * practice because the flush alarm splits live sessions every few minutes, so
+ * individual records rarely span an hour boundary.
+ *
+ * @param {Object[]} sessions
+ * @returns {number[]} 24 entries, index 0 = midnight, in milliseconds
  */
-export function createSimilarityEntry({ domain, titleTokens, domainTokens, categoryId }) {
-  return {
-    id: generateId(),
-    domain,
-    titleTokens: titleTokens || [],
-    domainTokens: domainTokens || [],
-    categoryId,
-    createdAt: Date.now(),
-  };
+export function bucketSessionsByHour(sessions) {
+  const buckets = new Array(HOURS_PER_DAY).fill(0);
+  if (!Array.isArray(sessions)) return buckets;
+
+  for (const session of sessions) {
+    if (!session || session.isActive) continue;
+    if (!(session.duration > 0) || !session.startTime) continue;
+
+    const hour = new Date(session.startTime).getHours();
+    if (hour >= 0 && hour < HOURS_PER_DAY) {
+      buckets[hour] += session.duration;
+    }
+  }
+  return buckets;
 }

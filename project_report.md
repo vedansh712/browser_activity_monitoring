@@ -6,6 +6,30 @@
 
 ---
 
+> ## ⚠️ Superseded — describes the pre-refactor design
+>
+> This document describes the architecture as of April 2026. A correctness and
+> security pass in August 2026 changed several of the structures described
+> below. **[README.md](README.md) is the authoritative description of the
+> current architecture.**
+>
+> Sections known to be out of date:
+>
+> | Described here | Actual current behaviour |
+> |---|---|
+> | `storage.getAggregatesForRange()` reads stored aggregates | Replaced by `AggregateService.getForRange()`, a read-through cache that rebuilds days whose stored aggregate is missing or stale |
+> | AI classification via OpenAI / Anthropic / Gemini API keys | Removed entirely. Classification is on-device only, via Chrome's built-in model, and is off by default |
+> | Session `duration` semantics | Reworked: `duration` is banked time from closed intervals, and every transition banks the open interval before changing state |
+> | Classification logic in `message-router.js` and `youtube.js` | Consolidated into `category-engine.js`; content scripts now report observations only |
+> | Categories resolved from `DEFAULT_CATEGORIES` | Resolved through `shared/category-registry.js`, which includes user-created categories |
+> | Sessions identified by URL alone | Sessions now carry `tabId`; tab events are scoped to the tracked tab |
+> | Favicons fetched from `google.com/s2/favicons` | Served from Chrome's local favicon cache; the extension makes no third-party requests |
+>
+> Storage schema (section 6) and the general component map (section 2) remain
+> broadly accurate.
+
+---
+
 ## Table of Contents
 1. [Project Overview](#project-overview)
 2. [File Structure and Architecture](#file-structure-and-architecture)

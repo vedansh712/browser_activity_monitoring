@@ -3,165 +3,246 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Track Daily - Dashboard</title>
+  <title>Track Daily — Dashboard</title>
+  <link rel="stylesheet" href="../shared/theme.css">
   <link rel="stylesheet" href="dashboard.css">
 </head>
-<body>
+<body class="hud-grid-bg hud-scanlines">
   <div class="app">
+
     <!-- Sidebar -->
     <nav class="sidebar">
       <div class="sidebar-header">
-        <h1 class="logo">Track Daily</h1>
+        <h1 class="logo">TRACK<span>/</span>DAILY</h1>
+        <div class="hud-label">LOCAL · 0 EXTERNAL REQ</div>
       </div>
+
       <ul class="nav-links">
         <li class="nav-item active" data-view="overview">
-          <span class="nav-icon">&#9632;</span> Overview
+          <span class="nav-key">01</span> Overview
         </li>
         <li class="nav-item" data-view="domains">
-          <span class="nav-icon">&#9775;</span> Domains
+          <span class="nav-key">02</span> Domains
         </li>
         <li class="nav-item" data-view="youtube">
-          <span class="nav-icon">&#9654;</span> YouTube
+          <span class="nav-key">03</span> YouTube
         </li>
         <li class="nav-item" data-view="categories">
-          <span class="nav-icon">&#9881;</span> Categories
+          <span class="nav-key">04</span> Categories
         </li>
       </ul>
+
       <div class="sidebar-footer">
-        <button class="btn-settings" id="btn-settings">Settings</button>
-        <button class="btn-export" id="btn-export">Export Data</button>
+        <button class="hud-btn" id="btn-export">Export</button>
+        <button class="hud-btn" id="btn-settings">Settings</button>
       </div>
     </nav>
 
-    <!-- Main Content -->
+    <!-- Main -->
     <main class="main-content">
-      <!-- Top Bar -->
+
       <div class="top-bar">
         <div class="date-controls">
-          <button class="date-btn" id="prev-period">&larr;</button>
-          <span class="date-label" id="date-label">Today</span>
-          <button class="date-btn" id="next-period">&rarr;</button>
+          <button class="date-btn" id="prev-period" aria-label="Previous period">&#9664;</button>
+          <span class="date-label hud-num" id="date-label">Today</span>
+          <button class="date-btn" id="next-period" aria-label="Next period">&#9654;</button>
         </div>
-        <div class="view-tabs">
-          <button class="view-tab active" data-range="daily">Daily</button>
-          <button class="view-tab" data-range="weekly">Weekly</button>
-          <button class="view-tab" data-range="monthly">Monthly</button>
+        <div class="hud-seg view-tabs">
+          <button class="is-active" data-range="daily">Daily</button>
+          <button data-range="weekly">Weekly</button>
+          <button data-range="monthly">Monthly</button>
         </div>
       </div>
 
-      <!-- Overview View -->
+      <!-- ═══ Overview ═══════════════════════════════════════════ -->
       <div class="view active" id="view-overview">
-        <!-- Summary Cards -->
+
         <div class="summary-cards">
-          <div class="card summary-card">
-            <div class="card-label">Total Time</div>
-            <div class="card-value" id="summary-total">0h 0m</div>
+          <div class="hud-panel stat">
+            <div class="hud-label">Total Time</div>
+            <div class="hud-value is-accent" id="summary-total">0m</div>
+            <div class="stat-delta" id="summary-total-delta"></div>
+            <div class="spark" id="summary-total-spark"></div>
           </div>
-          <div class="card summary-card">
-            <div class="card-label">Sessions</div>
-            <div class="card-value" id="summary-sessions">0</div>
+
+          <div class="hud-panel stat">
+            <div class="hud-label">Sessions</div>
+            <div class="hud-value" id="summary-sessions">0</div>
+            <div class="stat-delta" id="summary-sessions-delta"></div>
+            <div class="spark" id="summary-sessions-spark"></div>
           </div>
-          <div class="card summary-card">
-            <div class="card-label">Top Category</div>
-            <div class="card-value" id="summary-top-cat">-</div>
+
+          <div class="hud-panel stat">
+            <div class="hud-label">Context Switches</div>
+            <div class="hud-value" id="summary-switches">0</div>
+            <div class="stat-delta" id="summary-switches-delta"></div>
+            <div class="spark" id="summary-switches-spark"></div>
           </div>
-          <div class="card summary-card">
-            <div class="card-label">Top Domain</div>
-            <div class="card-value" id="summary-top-domain">-</div>
+
+          <div class="hud-panel stat">
+            <div class="hud-label">Top Domain</div>
+            <div class="hud-value is-small" id="summary-top-domain">-</div>
+            <div class="stat-delta" id="summary-top-domain-detail"></div>
+            <div class="spark" id="summary-top-domain-spark"></div>
           </div>
         </div>
 
-        <!-- Charts Row -->
         <div class="charts-row">
-          <div class="card chart-card wide">
-            <h3>Time Trend</h3>
-            <canvas id="time-trend-chart"></canvas>
+          <div class="hud-panel chart-card wide">
+            <div class="hud-panel-head">
+              <h3 class="hud-title" id="time-trend-title">Day Timeline</h3>
+              <span class="hud-label" id="time-trend-sub">LOCAL TIME</span>
+            </div>
+
+            <!-- Daily: what was visited, in order. Weekly/monthly: per-day trend.
+                 The two never show the same thing, which the previous hourly
+                 chart did — it duplicated the histogram below it exactly. -->
+            <div class="chart-wrap" id="trend-chart-wrap" hidden>
+              <canvas id="time-trend-chart"></canvas>
+              <p class="hud-empty" id="time-trend-chart-empty" hidden>NO DATA FOR THIS PERIOD</p>
+            </div>
+
+            <div class="timeline" id="day-timeline"></div>
           </div>
-          <div class="card chart-card">
-            <h3>Categories</h3>
-            <canvas id="category-doughnut"></canvas>
+
+          <div class="hud-panel chart-card">
+            <div class="hud-panel-head">
+              <h3 class="hud-title">Focus Score</h3>
+              <span class="hud-label" title="How concentrated your attention was: time in long blocks, how little you switched, and how few sites you spread across.">?</span>
+            </div>
+            <div class="focus-wrap">
+              <div class="gauge">
+                <svg viewBox="0 0 132 132" width="132" height="132" aria-hidden="true">
+                  <circle cx="66" cy="66" r="56" fill="none" stroke="var(--line)" stroke-width="1"/>
+                  <circle cx="66" cy="66" r="47" fill="none" stroke="var(--line)"
+                          stroke-width="1" stroke-dasharray="2 5"/>
+                  <circle id="focus-arc" cx="66" cy="66" r="56" fill="none"
+                          stroke="var(--accent)" stroke-width="2"
+                          stroke-dasharray="351.86" stroke-dashoffset="351.86"
+                          transform="rotate(-90 66 66)"/>
+                </svg>
+                <div class="gauge-mid">
+                  <b class="hud-num" id="focus-score">--</b>
+                  <span class="hud-label">/ 100</span>
+                </div>
+              </div>
+              <div class="focus-legend" id="focus-legend"></div>
+            </div>
           </div>
         </div>
 
-        <!-- Hourly Heatmap -->
-        <div class="card">
-          <h3>Activity by Hour</h3>
-          <div class="heatmap" id="hourly-heatmap"></div>
+        <div class="charts-row">
+          <div class="hud-panel chart-card wide">
+            <div class="hud-panel-head">
+              <h3 class="hud-title">Activity by Hour</h3>
+              <span class="hud-label">LOCAL TIME</span>
+            </div>
+            <div class="heatmap" id="hourly-heatmap"></div>
+          </div>
+
+          <div class="hud-panel chart-card">
+            <div class="hud-panel-head">
+              <h3 class="hud-title">Categories</h3>
+            </div>
+            <div class="chart-wrap">
+              <canvas id="category-doughnut"></canvas>
+              <p class="hud-empty" id="category-doughnut-empty" hidden>NO DATA FOR THIS PERIOD</p>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- Domains View -->
+      <!-- ═══ Domains ════════════════════════════════════════════ -->
       <div class="view" id="view-domains">
-        <div class="card">
-          <div class="table-controls">
-            <h3>All Domains</h3>
-            <select id="domain-category-filter">
-              <option value="all">All Categories</option>
-            </select>
+        <div class="hud-panel">
+          <div class="hud-panel-head">
+            <h3 class="hud-title">All Domains</h3>
+            <select id="domain-category-filter" class="hud-select"></select>
           </div>
-          <table class="data-table" id="domains-table">
-            <thead>
-              <tr>
-                <th>Rank</th>
-                <th class="sortable" data-sort="domain">Domain</th>
-                <th class="sortable active" data-sort="time">Time</th>
-                <th class="sortable" data-sort="sessions">Sessions</th>
-                <th>Category</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="domains-tbody"></tbody>
-          </table>
+          <div class="table-scroll">
+            <table class="hud-table" id="domains-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th class="sortable" data-sort="domain">Domain</th>
+                  <th class="sortable active" data-sort="time">Time</th>
+                  <th class="sortable" data-sort="sessions">Sessions</th>
+                  <th>Category</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="domains-tbody"></tbody>
+            </table>
+          </div>
         </div>
       </div>
 
-      <!-- YouTube View -->
+      <!-- ═══ YouTube ════════════════════════════════════════════ -->
       <div class="view" id="view-youtube">
-        <div class="summary-cards">
-          <div class="card summary-card">
-            <div class="card-label">Watch Time</div>
-            <div class="card-value" id="yt-watch-time">0h 0m</div>
+        <div class="summary-cards is-pair">
+          <div class="hud-panel stat">
+            <div class="hud-label">Watch Time</div>
+            <div class="hud-value is-accent" id="yt-watch-time">0m</div>
           </div>
-          <div class="card summary-card">
-            <div class="card-label">Videos Watched</div>
-            <div class="card-value" id="yt-video-count">0</div>
+          <div class="hud-panel stat">
+            <div class="hud-label">Videos Watched</div>
+            <div class="hud-value" id="yt-video-count">0</div>
           </div>
         </div>
+
         <div class="charts-row">
-          <div class="card chart-card">
-            <h3>Top Channels</h3>
-            <canvas id="yt-channels-chart"></canvas>
+          <div class="hud-panel chart-card">
+            <div class="hud-panel-head"><h3 class="hud-title">Top Channels</h3></div>
+            <div class="chart-wrap">
+              <canvas id="yt-channels-chart"></canvas>
+              <p class="hud-empty" id="yt-channels-chart-empty" hidden>NO YOUTUBE DATA</p>
+            </div>
           </div>
-          <div class="card chart-card">
-            <h3>Content Categories</h3>
-            <canvas id="yt-categories-chart"></canvas>
+          <div class="hud-panel chart-card">
+            <div class="hud-panel-head"><h3 class="hud-title">Content Categories</h3></div>
+            <div class="chart-wrap">
+              <canvas id="yt-categories-chart"></canvas>
+              <p class="hud-empty" id="yt-categories-chart-empty" hidden>NO YOUTUBE DATA</p>
+            </div>
           </div>
         </div>
-        <div class="card">
-          <h3>Videos Watched</h3>
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Title</th>
-                <th>Channel</th>
-                <th>Duration</th>
-                <th>Watch Time</th>
-                <th>Category</th>
-              </tr>
-            </thead>
-            <tbody id="yt-videos-tbody"></tbody>
-          </table>
+
+        <div class="hud-panel">
+          <div class="hud-panel-head"><h3 class="hud-title">Videos Watched</h3></div>
+          <div class="table-scroll">
+            <table class="hud-table">
+              <thead>
+                <tr>
+                  <th>Title</th><th>Channel</th><th>Length</th><th>Watched</th><th>Category</th>
+                </tr>
+              </thead>
+              <tbody id="yt-videos-tbody"></tbody>
+            </table>
+          </div>
         </div>
       </div>
 
-      <!-- Categories View -->
+      <!-- ═══ Categories ═════════════════════════════════════════ -->
       <div class="view" id="view-categories">
-        <div class="card">
-          <h3>Category Breakdown</h3>
+        <div class="hud-panel">
+          <div class="hud-panel-head"><h3 class="hud-title">Category Breakdown</h3></div>
           <div class="category-list" id="category-breakdown"></div>
         </div>
       </div>
+
     </main>
+  </div>
+
+  <!-- Reassign modal -->
+  <div class="hud-modal-backdrop" id="reassign-modal" hidden>
+    <div class="hud-modal" role="dialog" aria-modal="true" aria-labelledby="reassign-title">
+      <h3 id="reassign-title">Reassign Category</h3>
+      <p class="modal-subtitle hud-num" id="reassign-domain"></p>
+      <div class="category-picker" id="reassign-options"></div>
+      <div class="hud-modal-actions">
+        <button class="hud-btn" id="reassign-cancel">Cancel</button>
+      </div>
+    </div>
   </div>
 
   <script src="../lib/chart.umd.min.js"></script>

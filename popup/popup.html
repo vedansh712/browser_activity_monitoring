@@ -4,63 +4,68 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Track Daily</title>
+  <link rel="stylesheet" href="../shared/theme.css">
   <link rel="stylesheet" href="popup.css">
 </head>
-<body>
+<body class="hud-scanlines">
   <div class="popup-container">
-    <!-- Header -->
+
     <div class="header">
-      <h1 class="logo">Track Daily</h1>
-      <label class="toggle-switch">
-        <input type="checkbox" id="tracking-toggle" checked>
-        <span class="slider"></span>
+      <h1 class="logo">TRACK<span>/</span>DAILY</h1>
+      <label class="hud-switch">
+        <input type="checkbox" id="tracking-toggle" checked aria-label="Toggle tracking">
+        <span class="track"></span>
       </label>
     </div>
 
-    <!-- Current Session -->
-    <div class="current-session" id="current-session">
+    <!-- Live session -->
+    <div class="current-session">
       <div class="session-status">
-        <span class="pulse-dot"></span>
-        <span id="current-domain">Not tracking</span>
+        <span class="hud-dot" id="pulse-dot"></span>
+        <span class="session-domain" id="current-domain">Not tracking</span>
       </div>
-      <span class="session-time" id="current-time">00:00:00</span>
+      <span class="session-time hud-num" id="current-time">00:00:00</span>
     </div>
 
-    <!-- Today's Total -->
-    <div class="today-total">
-      <div class="total-label">Today</div>
-      <div class="total-time" id="total-time">0h 0m</div>
+    <!-- Today -->
+    <div class="today-block">
+      <div class="today-left">
+        <div class="hud-label">Today</div>
+        <div class="today-total hud-num" id="total-time">0m</div>
+        <div class="today-meta hud-label" id="today-meta"></div>
+      </div>
+      <div class="chart-holder">
+        <canvas id="category-chart" width="132" height="132"></canvas>
+        <div class="chart-mid">
+          <b class="hud-num" id="focus-score">--</b>
+          <span class="hud-label">FOCUS</span>
+        </div>
+      </div>
     </div>
 
-    <!-- Category Breakdown (mini chart) -->
-    <div class="chart-section">
-      <canvas id="category-chart" width="200" height="200"></canvas>
-    </div>
-
-    <!-- Top Domains -->
+    <!-- Top sites -->
     <div class="top-domains">
-      <h3>Top Sites</h3>
+      <div class="hud-title">Top Sites</div>
       <ul id="domain-list">
-        <li class="empty-state">No data yet</li>
+        <li class="hud-empty">NO DATA YET</li>
       </ul>
     </div>
 
-    <!-- Uncategorized Notice -->
-    <div class="uncategorized-notice" id="uncategorized-notice" style="display: none;">
+    <!-- Uncategorized prompt -->
+    <div class="uncategorized-notice" id="uncategorized-notice" hidden>
       <div class="notice-header">
-        <span class="notice-icon">?</span>
-        <span>Categorize <strong id="uncat-domain"></strong></span>
+        <span class="hud-label">CATEGORIZE</span>
+        <strong class="hud-num" id="uncat-domain"></strong>
       </div>
       <div class="category-buttons" id="category-buttons"></div>
     </div>
 
-    <!-- Footer Actions -->
     <div class="footer">
-      <button class="btn btn-primary" id="open-dashboard">Open Dashboard</button>
-      <button class="btn btn-secondary" id="open-options">Settings</button>
+      <button class="hud-btn is-active" id="open-dashboard">Dashboard</button>
+      <button class="hud-btn" id="open-options">Settings</button>
     </div>
-  </div>
 
+  </div>
   <script src="popup.js" type="module"></script>
 </body>
 </html>

@@ -1,4 +1,14 @@
-// YouTube content script — runs in ISOLATED world.
+// YouTube content script — runs in ISOLATED world on ALL of youtube.com.
+//
+// Injected site-wide rather than only on /watch, because content scripts are
+// injected on document navigation and never on pushState. YouTube is a
+// single-page app, so opening the homepage and clicking a video — the normal
+// way viewing starts — changes the URL without a document load and would leave
+// a watch-only match never injected at all. Time would still be tracked by the
+// service worker while no script existed to read the title, producing sessions
+// with no metadata.
+//
+// This script therefore detects watch pages itself and stays inert elsewhere.
 // Receives video metadata from the MAIN-world injected script (youtube-injected.js)
 // via window.postMessage, then forwards to the service worker.
 //
@@ -9,7 +19,88 @@
   'use strict';
 
   const TAG = '[Track Daily]';
-  console.log(TAG, 'YouTube content script loaded on', location.href);
+
+  // ─── Runtime settings mirror ────────────────────────────────────────
+  // Content scripts can't import the shared modules (they aren't loaded as ES
+  // modules), so the two settings this script needs are mirrored locally and
+  // kept current via storage events. Reading storage per extraction would add
+  // an async hop to a hot path.
+
+  let deepTrackingEnabled = true;
+  let debugEnabled = false;
+
+  /*
+   * Orphaned-script guard
+   * ─────────────────────
+   * Reloading the extension severs this script's link to it while the page
+   * keeps running it. chrome.* calls then throw *synchronously*, so .catch()
+   * never sees them — and this script polls every five seconds, so an orphan
+   * would throw indefinitely. Once orphaned it stops its timers and observers
+   * and goes quiet.
+   *
+   * Duplicated from generic.js because manifest content scripts are not ES
+   * modules and have nothing to import from.
+   */
+  let alive = true;
+  const teardown = [];
+
+  function extensionGone(error) {
+    return !alive || /context invalidated|Receiving end does not exist/i.test(
+      String(error?.message ?? error ?? '')
+    );
+  }
+
+  function shutdown() {
+    if (!alive) return;
+    alive = false;
+    for (const stop of teardown) {
+      try { stop(); } catch { /* already gone */ }
+    }
+  }
+
+  /** Send to the service worker, surviving an invalidated context. */
+  function sendToWorker(message) {
+    if (!alive) return;
+    try {
+      if (!chrome.runtime?.id) return shutdown();
+      const pending = chrome.runtime.sendMessage(message);
+      if (pending?.catch) {
+        pending.catch((err) => {
+          if (extensionGone(err)) shutdown();
+        });
+      }
+    } catch (err) {
+      if (extensionGone(err)) shutdown();
+    }
+  }
+
+  function applySettings(settings) {
+    if (!settings) return;
+    deepTrackingEnabled = settings.youtubeDeepTracking !== false;
+    debugEnabled = settings.logLevel === 'debug';
+  }
+
+  try {
+    chrome.storage.local.get('settings')
+      .then((stored) => applySettings(stored.settings))
+      .catch(() => { /* extension context may be gone */ });
+
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (!alive) return;
+      if (area === 'local' && changes.settings) applySettings(changes.settings.newValue);
+    });
+  } catch {
+    shutdown();
+  }
+
+  /**
+   * Verbose logging, silent unless the user raises the log level.
+   * Video titles and URLs are personal data; they must not be written to the
+   * page console by default, where the user does not expect to find them.
+   */
+  function debug(...args) {
+    if (debugEnabled) console.log(TAG, ...args);
+  }
 
   // ─── State ──────────────────────────────────────────────────────────
 
@@ -55,7 +146,7 @@
     const pageData = event.data.data;
 
     if (pageData && pageData.__ready) {
-      console.log(TAG, 'Injected script ready');
+      debug('Injected script ready');
       // Trigger an initial extraction now that the bridge is up
       setTimeout(requestExtraction, 500);
       return;
@@ -67,7 +158,7 @@
     // Otherwise it's stale (from a previous video) — ignore it.
     const urlVideoId = getVideoId();
     if (pageData.videoId && urlVideoId && pageData.videoId !== urlVideoId) {
-      console.log(TAG, 'Ignoring stale pageData — videoId mismatch',
+      debug('Ignoring stale pageData — videoId mismatch',
         'pageData:', pageData.videoId, 'URL:', urlVideoId);
       return;
     }
@@ -89,6 +180,11 @@
   // ─── Build full metadata and send to service worker ─────────────────
 
   function processAndSend(pageData) {
+    // Honour the user's setting at the source. The service worker also rejects
+    // this message, but stopping here means the page is never scraped for video
+    // metadata at all when deep tracking is off.
+    if (!deepTrackingEnabled) return;
+
     const videoId = getVideoId();
     if (!videoId) return;
 
@@ -120,10 +216,9 @@
     // DOM fallbacks for any missing fields
     fillFromDOM(meta);
 
-    // Category inference from title as last resort
-    if (!meta.videoCategory) {
-      meta.videoCategory = inferCategoryFromTitle(meta.videoTitle);
-    }
+    // NOTE: category inference from the title deliberately does NOT happen here.
+    // The content script reports only what it can observe; all guessing lives in
+    // background/category-engine.js so the keyword tables exist in one place.
 
     // QUALITY GATE: require videoId AND a non-trivial title before sending.
     // Prevents sending partial/wrong data during SPA transitions.
@@ -145,7 +240,7 @@
     lastSentFingerprint = fingerprint;
     lastSentVideoId = meta.videoId;
 
-    console.log(TAG, 'YouTube metadata ready:', {
+    debug('YouTube metadata ready:', {
       videoId: meta.videoId,
       title: meta.videoTitle.substring(0, 60),
       channel: meta.channelName || '(no channel)',
@@ -153,9 +248,7 @@
       duration: meta.videoDuration,
     });
 
-    chrome.runtime.sendMessage({ type: 'YOUTUBE_META', data: meta }).catch((err) => {
-      console.warn(TAG, 'sendMessage error:', err?.message);
-    });
+    sendToWorker({ type: 'YOUTUBE_META', data: meta });
   }
 
   // ─── DOM helpers ────────────────────────────────────────────────────
@@ -221,42 +314,12 @@
     return null;
   }
 
-  function inferCategoryFromTitle(title) {
-    if (!title) return '';
-    const t = title.toLowerCase();
-    const hints = {
-      Education: [
-        'tutorial', 'course', 'learn', 'explained', 'how to', 'lecture', 'lesson',
-        'programming', 'python', 'javascript', 'coding', 'beginners', 'complete guide',
-        'crash course', 'masterclass', 'for beginners', 'step by step', 'in hindi',
-        'full course', 'web development', 'data science', 'machine learning',
-      ],
-      'Science & Technology': [
-        'tech', 'review', 'unboxing', 'setup', 'software', 'hardware', ' ai ',
-        'gadget', 'benchmark',
-      ],
-      Music: [
-        'official video', 'official audio', 'music video', 'lyrics',
-        'album', 'remix',
-      ],
-      Gaming: [
-        'gameplay', 'walkthrough', 'playthrough', 'gaming', 'lets play',
-        'minecraft', 'fortnite', 'valorant',
-      ],
-      'News & Politics': ['politics', 'election', 'debate'],
-      Entertainment: ['funny', 'comedy', 'prank', 'challenge', 'reaction', 'vlog'],
-    };
-    for (const [category, keywords] of Object.entries(hints)) {
-      if (keywords.some((k) => t.includes(k))) return category;
-    }
-    return '';
-  }
-
   // ─── Listen for re-request messages from service worker ─────────────
 
   chrome.runtime.onMessage.addListener((message) => {
+    if (!alive) return;
     if (message?.type === 'REREQUEST_YT_META') {
-      console.log(TAG, 'Re-extraction requested by service worker');
+      debug('Re-extraction requested by service worker');
       // Reset dedup so we re-send
       lastSentFingerprint = null;
       lastSentVideoId = null;
@@ -274,7 +337,7 @@
 
   function onNavigate() {
     const newVideoId = getVideoId();
-    console.log(TAG, 'Navigation detected — new videoId:', newVideoId, 'old:', currentVideoId);
+    debug('Navigation detected — new videoId:', newVideoId, 'old:', currentVideoId);
 
     // CRITICAL: clear stale pending data from the previous video
     pendingPageData = null;
@@ -287,6 +350,12 @@
     setTimeout(requestExtraction, 1200);
     // Scheduled DOM-only attempt as backup (only uses current DOM, no stale pageData)
     setTimeout(() => processAndSend(null), 2800);
+
+    // Reattach to the player. Arriving at a video from the homepage or search
+    // is the normal way viewing starts, and the player does not exist until
+    // that navigation happens.
+    clearTimeout(theaterAttachTimer);
+    startTheaterObserver();
   }
 
   document.addEventListener('yt-navigate-finish', onNavigate);
@@ -295,6 +364,7 @@
   // URL change observer (catch-all). Only fires when videoId actually changes
   // to avoid triggering on notification-count updates in document.title.
   const urlObserver = new MutationObserver(() => {
+    if (!alive) return;
     if (location.href !== lastUrl) {
       const newVid = getVideoId();
       const oldVid = currentVideoId;
@@ -326,6 +396,8 @@
   // ─── Theater / Fullscreen detection ─────────────────────────────────
 
   function checkTheaterFullscreen() {
+    if (!alive) return;
+
     const watchFlexy = document.querySelector('ytd-watch-flexy');
     const isTheater = watchFlexy ? watchFlexy.hasAttribute('theater') : false;
     const isFullscreenAttr = watchFlexy ? watchFlexy.hasAttribute('fullscreen') : false;
@@ -333,20 +405,34 @@
 
     const isExpanded = isTheater || isFullscreenAttr || isFullscreenAPI;
 
-    if (isExpanded !== lastTheaterOrFull) {
+    // Re-send while expanded, not only on change. The background signal expires
+    // unless refreshed, which is what stops a stuck "watching fullscreen" flag
+    // from suppressing idle detection for the rest of the browser session.
+    if (isExpanded || isExpanded !== lastTheaterOrFull) {
+      if (isExpanded !== lastTheaterOrFull) {
+        debug('YouTube expanded state changed:', isExpanded,
+          '| theater:', isTheater, '| fullscreen:', isFullscreenAttr || isFullscreenAPI);
+      }
       lastTheaterOrFull = isExpanded;
-      console.log(TAG, 'YouTube expanded state changed:', isExpanded,
-        '| theater:', isTheater, '| fullscreen:', isFullscreenAttr || isFullscreenAPI);
-      chrome.runtime.sendMessage({
+      sendToWorker({
         type: 'YOUTUBE_THEATER',
         data: { isExpanded, isTheater, isFullscreen: isFullscreenAttr || isFullscreenAPI },
-      }).catch(() => {});
+      });
     }
   }
 
   const bodyObserver = new MutationObserver(checkTheaterFullscreen);
 
-  function startTheaterObserver() {
+  // Now that the script loads on all of YouTube, most pages it runs on have no
+  // player at all. Retrying forever would leave a one-second timer running on
+  // the homepage indefinitely, so the search is bounded and simply restarts on
+  // the next navigation.
+  const THEATER_ATTACH_ATTEMPTS = 10;
+  let theaterAttachTimer = null;
+
+  function startTheaterObserver(attempt = 0) {
+    if (!alive) return;
+
     const watchFlexy = document.querySelector('ytd-watch-flexy');
     if (watchFlexy) {
       bodyObserver.observe(watchFlexy, {
@@ -354,12 +440,23 @@
         attributeFilter: ['theater', 'fullscreen'],
       });
       checkTheaterFullscreen();
-    } else {
-      setTimeout(startTheaterObserver, 1000);
+      return;
+    }
+
+    if (attempt < THEATER_ATTACH_ATTEMPTS) {
+      theaterAttachTimer = setTimeout(() => startTheaterObserver(attempt + 1), 1000);
     }
   }
+
+  teardown.push(() => clearTimeout(theaterAttachTimer));
   startTheaterObserver();
 
   document.addEventListener('fullscreenchange', checkTheaterFullscreen);
-  setInterval(checkTheaterFullscreen, 5000);
+
+  // Registered for teardown: an orphaned script polling every five seconds is
+  // what turns one reload into an endless stream of console errors.
+  const theaterPoll = setInterval(checkTheaterFullscreen, 5000);
+  teardown.push(() => clearInterval(theaterPoll));
+  teardown.push(() => urlObserver.disconnect());
+  teardown.push(() => bodyObserver.disconnect());
 })();

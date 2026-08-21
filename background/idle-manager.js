@@ -1,19 +1,24 @@
-import { DEFAULT_IDLE_THRESHOLD_SECONDS } from '../shared/constants.js';
+import {
+  DEFAULT_IDLE_THRESHOLD_SECONDS,
+  MIN_IDLE_THRESHOLD_SECONDS,
+} from '../shared/constants.js';
 
 let onIdleCallback = null;
 let onActiveCallback = null;
 
 /**
- * Initialize idle detection.
+ * Register the idle state listener.
+ *
+ * MUST be called synchronously at service-worker module top level. Registering
+ * it inside an async callback means it only survives until the first MV3
+ * worker teardown, after which idle detection silently stops working for the
+ * rest of the browser session.
+ *
  * @param {Object} callbacks - { onIdle, onActive }
- * @param {number} thresholdSeconds - seconds before user is considered idle
  */
-export function initIdleDetection({ onIdle, onActive }, thresholdSeconds = DEFAULT_IDLE_THRESHOLD_SECONDS) {
+export function registerIdleListener({ onIdle, onActive }) {
   onIdleCallback = onIdle;
   onActiveCallback = onActive;
-
-  chrome.idle.setDetectionInterval(thresholdSeconds);
-
   chrome.idle.onStateChanged.addListener(handleStateChange);
 }
 
@@ -30,17 +35,10 @@ function handleStateChange(newState) {
 }
 
 /**
- * Update the idle detection threshold.
+ * Set the idle detection threshold, clamped to the range chrome.idle accepts.
+ * Values below 15s are rejected outright by the API.
  */
-export function updateIdleThreshold(seconds) {
-  chrome.idle.setDetectionInterval(seconds);
-}
-
-/**
- * Query the current idle state.
- */
-export async function queryIdleState(thresholdSeconds = DEFAULT_IDLE_THRESHOLD_SECONDS) {
-  return new Promise((resolve) => {
-    chrome.idle.queryState(thresholdSeconds, resolve);
-  });
+export function applyIdleThreshold(seconds) {
+  const value = Number(seconds) || DEFAULT_IDLE_THRESHOLD_SECONDS;
+  chrome.idle.setDetectionInterval(Math.max(MIN_IDLE_THRESHOLD_SECONDS, value));
 }

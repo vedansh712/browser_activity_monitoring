@@ -1,18 +1,44 @@
 /**
- * Extract the hostname from a URL string.
- * Returns empty string for invalid/chrome URLs.
+ * Extract the normalized hostname from a URL string.
+ *
+ * Only http(s) is tracked — an allowlist rather than a blocklist, so chrome:,
+ * chrome-extension:, about:, file:, view-source: and every other scheme are
+ * excluded without having to enumerate them.
+ *
+ * The hostname is lowercased and stripped of a leading "www." so that
+ * "www.youtube.com" and "youtube.com" aggregate as a single site instead of
+ * splitting one domain's time across two rows.
+ *
+ * Returns empty string for anything untrackable.
  */
 export function extractDomain(url) {
   if (!url) return '';
   try {
     const parsed = new URL(url);
-    if (parsed.protocol === 'chrome:' || parsed.protocol === 'chrome-extension:' || parsed.protocol === 'about:') {
-      return '';
-    }
-    return parsed.hostname;
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+    return parsed.hostname.toLowerCase().replace(/^www\./, '');
   } catch {
     return '';
   }
+}
+
+/**
+ * URL for a domain's favicon, served from Chrome's own local favicon cache.
+ *
+ * Deliberately NOT a third-party service. Fetching icons from something like
+ * google.com/s2/favicons would transmit the name of every site the user visits
+ * to that third party, with cookies attached, every time the popup or dashboard
+ * renders — which would defeat the point of a local-only browsing tracker.
+ *
+ * Requires the "favicon" permission. Returns '' outside an extension context.
+ */
+export function faviconUrl(domain, size = 32) {
+  if (!domain) return '';
+  if (typeof chrome === 'undefined' || !chrome.runtime?.getURL) return '';
+  const pageUrl = `https://${domain}`;
+  return chrome.runtime.getURL(
+    `/_favicon/?pageUrl=${encodeURIComponent(pageUrl)}&size=${size}`
+  );
 }
 
 /**
@@ -38,6 +64,22 @@ export function formatDate(date) {
 export function parseDate(dateStr) {
   const [y, m, d] = dateStr.split('-').map(Number);
   return new Date(y, m - 1, d);
+}
+
+const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Whether a value is a well-formed YYYY-MM-DD key for a real calendar date.
+ *
+ * Date keys arrive from the dashboard UI and are used directly as IndexedDB
+ * keys and key-range bounds, so they are untrusted input and must be validated
+ * at the boundary. The round-trip check rejects values that match the shape but
+ * are not real dates ("2026-02-30", "2026-13-01").
+ */
+export function isValidDateKey(value) {
+  if (typeof value !== 'string' || !DATE_KEY_PATTERN.test(value)) return false;
+  const parsed = parseDate(value);
+  return !Number.isNaN(parsed.getTime()) && formatDate(parsed) === value;
 }
 
 /**
@@ -85,6 +127,20 @@ export function formatDurationPrecise(ms) {
   return [hours, minutes, seconds]
     .map((v) => String(v).padStart(2, '0'))
     .join(':');
+}
+
+/**
+ * Coerce a value to an integer within [min, max], falling back when it is not
+ * a usable number. Used to validate numeric settings on the way into storage.
+ *
+ * @param {*} value
+ * @param {{min: number, max: number, fallback: number}} bounds
+ * @returns {number}
+ */
+export function clampInt(value, { min, max, fallback }) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
 }
 
 /**

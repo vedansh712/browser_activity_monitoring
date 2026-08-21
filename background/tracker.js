@@ -1,5 +1,13 @@
-import { createSession, endSession, pauseSession } from '../shared/data-models.js';
-import { extractDomain, generateId } from '../shared/utils.js';
+import {
+  createSession,
+  endSession,
+  pauseSession,
+  resumeSession,
+  sessionElapsed,
+  creditableInterval,
+} from '../shared/data-models.js';
+import { MIN_SESSION_MS } from '../shared/constants.js';
+import { extractDomain, generateId, formatDate } from '../shared/utils.js';
 import * as storage from './storage-manager.js';
 
 /**
@@ -17,6 +25,7 @@ export async function startNewSession(tab, categoryId) {
     url: tab.url,
     title: tab.title || '',
     categoryId: categoryId || 'uncategorized',
+    tabId: tab.id ?? null,
   });
 
   await storage.setCurrentSession(session);
@@ -24,23 +33,21 @@ export async function startNewSession(tab, categoryId) {
 }
 
 /**
- * End the current active session and save it to IndexedDB.
+ * End the current session and save it to IndexedDB.
+ *
+ * Paused sessions are ended too — their banked time is real and must not be
+ * discarded just because the clock happened to be stopped.
+ *
  * Returns the ended session or null if there wasn't one.
  */
 export async function endCurrentSession() {
   const current = await storage.getCurrentSession();
-  if (!current || !current.isActive) return null;
+  if (!current) return null;
 
   const ended = endSession(current);
 
-  // Only save sessions longer than 1 second
-  if (ended.duration > 1000) {
-    const hasMeta = ended.meta && ended.meta.videoId;
-    console.log('[Track Daily] Saving session:', ended.domain,
-      '| duration:', Math.round(ended.duration / 1000) + 's',
-      '| category:', ended.categoryId,
-      '| hasMeta:', !!hasMeta,
-      hasMeta ? '| video: ' + ended.meta.videoTitle?.substring(0, 30) : '');
+  // Only save sessions longer than the noise floor
+  if (ended.duration > MIN_SESSION_MS) {
     await storage.saveSession(ended);
   }
 
@@ -50,7 +57,7 @@ export async function endCurrentSession() {
 
 /**
  * Pause the current session (user went idle or window lost focus).
- * Saves partial duration but keeps it restorable.
+ * Banks elapsed time; the session stays restorable.
  */
 export async function pauseCurrentSession() {
   const current = await storage.getCurrentSession();
@@ -66,15 +73,45 @@ export async function pauseCurrentSession() {
  */
 export async function resumeCurrentSession() {
   const current = await storage.getCurrentSession();
-  if (!current) return null;
+  if (!current || current.isActive) return current;
 
-  const resumed = {
-    ...current,
-    startTime: Date.now(), // Reset timer from now
-    isActive: true,
-  };
+  const resumed = resumeSession(current);
   await storage.setCurrentSession(resumed);
   return resumed;
+}
+
+/**
+ * Heartbeat. Credits the time since the last tick to the running session.
+ *
+ * This is what stops sleep being counted as browsing. Elapsed time is no
+ * longer inferred from a start timestamp — which cannot distinguish a page
+ * left open for eleven hours from a laptop shut for eleven hours — but accrued
+ * a minute at a time while the machine is demonstrably awake.
+ *
+ * Alarms do not fire while a device is suspended, so an oversized gap is
+ * direct evidence that nothing was happening. That gap is discarded outright
+ * rather than clamped, because clamping still credits time that was never
+ * spent: five sleeps a day at a ten-minute clamp is nearly an hour of
+ * invented browsing.
+ *
+ * @returns {Promise<{credited: number, discarded: number}|null>}
+ */
+export async function tickSession() {
+  const current = await storage.getCurrentSession();
+  if (!current || !current.isActive) return null;
+
+  const now = Date.now();
+  // Math.max guards a wall clock that moved backwards (NTP, DST, manual change).
+  const elapsed = Math.max(0, now - current.startTime);
+  const credited = creditableInterval(elapsed);
+
+  await storage.setCurrentSession({
+    ...current,
+    duration: (current.duration || 0) + credited,
+    startTime: now,
+  });
+
+  return { credited, discarded: elapsed - credited };
 }
 
 /**
@@ -132,39 +169,36 @@ export async function updateSessionCategory(categoryId) {
 }
 
 /**
- * Flush the current session's accumulated time to storage
- * without ending it. Called periodically by the alarm.
+ * Flush the current session's accumulated time to storage without ending it.
+ * Called periodically by the alarm.
+ *
+ * Writes a closed snapshot carrying everything banked so far, then zeroes the
+ * live session's banked time and restarts its clock. Splitting the record this
+ * way is also what keeps a long session's time attributed to the right day.
  */
 export async function flushCurrentSession() {
   const current = await storage.getCurrentSession();
   if (!current || !current.isActive) return;
 
-  // Save a snapshot to IndexedDB as a completed partial session
   const now = Date.now();
-  const partialDuration = now - current.startTime;
+  const elapsed = sessionElapsed(current, now);
+  if (elapsed <= MIN_SESSION_MS) return;
 
-  if (partialDuration > 1000) {
-    const snapshot = {
-      ...current,
-      id: generateId(), // New unique ID so we don't overwrite previous flushes
-      endTime: now,
-      duration: partialDuration, // Only this flush period's duration
-      isActive: false,
-    };
+  const snapshot = {
+    ...current,
+    id: generateId(), // New unique ID so we don't overwrite previous flushes
+    endTime: now,
+    duration: elapsed,
+    isActive: false,
+    date: formatDate(new Date(now)),
+  };
 
-    const hasMeta = snapshot.meta && snapshot.meta.videoId;
-    console.log('[Track Daily] Flushing session:', snapshot.domain,
-      '| duration:', Math.round(partialDuration / 1000) + 's',
-      '| category:', snapshot.categoryId,
-      '| hasMeta:', !!hasMeta);
+  await storage.saveSession(snapshot);
 
-    await storage.saveSession(snapshot);
-
-    // Reset the current session's timer (keep meta and category)
-    const reset = {
-      ...current,
-      startTime: now,
-    };
-    await storage.setCurrentSession(reset);
-  }
+  // Restart the live session's clock with nothing banked (keep meta and category)
+  await storage.setCurrentSession({
+    ...current,
+    startTime: now,
+    duration: 0,
+  });
 }

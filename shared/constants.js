@@ -2,10 +2,12 @@
 export const STORAGE_KEYS = {
   SETTINGS: 'settings',
   CATEGORIES: 'categories',
-  SIMILARITY_DATA: 'similarity_data',
   CURRENT_SESSION: 'current_session',
   TRACKING_STATE: 'tracking_state',
   YT_EXPANDED: 'yt_expanded', // YouTube is in theater or fullscreen mode
+  MEDIA_PLAYING: 'media_playing', // tracked page has a video or audio element playing
+  UNCATEGORIZED: 'uncategorized_queue', // pending domains awaiting user categorization
+  AI_CACHE: 'ai_cache', // domain -> categoryId (or null for "AI gave up")
 };
 
 // IndexedDB
@@ -28,13 +30,202 @@ export const TRACKING_STATES = {
 // Alarm names
 export const ALARMS = {
   FLUSH_SESSION: 'flush_session',
-  REBUILD_AGGREGATES: 'rebuild_aggregates',
+  TICK: 'tick',
 };
 
 // Intervals
 export const FLUSH_INTERVAL_MINUTES = 5;
 export const DEFAULT_IDLE_THRESHOLD_SECONDS = 120;
 export const DEFAULT_RETENTION_DAYS = 90;
+
+// Sessions shorter than this are noise (tab flicked through on the way elsewhere).
+export const MIN_SESSION_MS = 1000;
+
+/**
+ * Heartbeat interval.
+ *
+ * Time is accrued in small verified increments rather than computed from a
+ * start timestamp, because a start timestamp cannot tell the difference
+ * between "this page was open for eleven hours" and "the laptop lid was shut
+ * for eleven hours". Alarms do not fire while the machine is suspended, so a
+ * missing heartbeat is direct evidence that no browsing happened.
+ *
+ * One minute is the shortest period Chrome honours for a released extension.
+ */
+export const TICK_INTERVAL_MINUTES = 1;
+
+/**
+ * The longest gap between heartbeats still treated as real elapsed time.
+ *
+ * Anything longer means the heartbeat did not run — the machine slept, the
+ * browser was suspended, or the device was closed — and the entire gap is
+ * discarded rather than credited. The allowance above the tick interval exists
+ * only to tolerate Chrome delaying an alarm under load.
+ */
+export const MAX_TRACKED_INTERVAL_MS = TICK_INTERVAL_MINUTES * 3 * 60 * 1000;
+
+// chrome.idle rejects intervals below 15s.
+export const MIN_IDLE_THRESHOLD_SECONDS = 15;
+
+/**
+ * How long a media signal stays valid without being re-asserted.
+ *
+ * The "media is playing" exemption suppresses idle pausing, so a stuck flag
+ * disables idle detection entirely for the rest of the browser session. Making
+ * the signal expire means the worst case is a few seconds of over-tracking
+ * instead of hours, and it self-heals with no cleanup path to get wrong.
+ */
+export const MEDIA_SIGNAL_TTL_MS = 15_000;
+
+/** How often a page re-asserts that its media is still playing. */
+export const MEDIA_SIGNAL_REFRESH_MS = 5_000;
+
+/**
+ * Ceiling used when repairing historical sessions.
+ *
+ * A correctly-recorded session cannot exceed one flush period by much, since
+ * the flush closes the record and starts a new one. Anything far above that
+ * was produced by the pre-heartbeat code crediting sleep to an open page.
+ * Deliberately generous so the repair cannot damage legitimate records.
+ */
+export const MAX_PLAUSIBLE_SESSION_MS = FLUSH_INTERVAL_MINUTES * 2 * 60 * 1000;
+
+/**
+ * Accent colour.
+ *
+ * The entire theme derives from this one value, so it is safe to let the user
+ * pick anything. theme.js recomputes the foreground used on solid accent fills
+ * from the chosen colour's luminance, so a pale accent still gets readable text.
+ */
+export const DEFAULT_ACCENT = '#ff2b4a';
+
+/**
+ * Accent modes.
+ *
+ * 'fixed'   — the colour the user picked, always.
+ * 'dynamic' — derived from how long they have browsed today, so the interface
+ *             itself becomes an ambient readout: green early in the day,
+ *             drifting through teal and cyan to blue as the hours accumulate.
+ */
+export const ACCENT_MODES = Object.freeze({ FIXED: 'fixed', DYNAMIC: 'dynamic' });
+
+/**
+ * Endpoints of the dynamic gradient, in HSL.
+ *
+ * Sweeping hue from 140° to 360° walks the long way round the colour wheel:
+ * green → cyan → blue → violet → pink → red. That ordering carries meaning as
+ * well as variety, since green reads as "barely started" and red as "you have
+ * been at this all day".
+ *
+ * Saturation and lightness are held constant so only hue changes, which keeps
+ * every step equally readable against the dark surfaces — the interface shifts
+ * in colour without appearing to brighten or fade.
+ */
+export const ACCENT_GRADIENT = Object.freeze({
+  fromHue: 140,
+  toHue: 360,
+  saturation: 88,
+  lightness: 58,
+});
+
+/**
+ * Named waypoints along the ramp, used to paint the preview and to pin the
+ * expected ordering in tests. Fractions are derived, never hardcoded, so they
+ * stay correct if the endpoints move.
+ */
+export const ACCENT_GRADIENT_STOPS = Object.freeze([
+  { name: 'Green', hue: 140 },
+  { name: 'Cyan',  hue: 180 },
+  { name: 'Blue',  hue: 220 },
+  { name: 'Violet', hue: 270 },
+  { name: 'Pink',  hue: 310 },
+  { name: 'Red',   hue: 360 },
+]);
+
+/** Tracked hours at which the dynamic accent reaches the far end of the ramp. */
+export const DEFAULT_ACCENT_SPAN_HOURS = 8;
+
+export const ACCENT_SPAN_LIMITS = Object.freeze({ min: 1, max: 24, fallback: DEFAULT_ACCENT_SPAN_HOURS });
+
+/** Curated starting points; the picker also allows any colour. */
+export const ACCENT_PRESETS = Object.freeze([
+  { name: 'Crimson', value: '#ff2b4a' },
+  { name: 'Ember',   value: '#ff6a2b' },
+  { name: 'Amber',   value: '#ffb02b' },
+  { name: 'Acid',    value: '#a6ff2b' },
+  { name: 'Mint',    value: '#2bffa8' },
+  { name: 'Ice',     value: '#21d4fd' },
+  { name: 'Azure',   value: '#2b7bff' },
+  { name: 'Violet',  value: '#8b5cff' },
+  { name: 'Magenta', value: '#ff2bd4' },
+]);
+
+// Default log threshold. 'warn' keeps normal operation silent so that anything
+// reaching the console is genuinely actionable; users can raise it in settings.
+export const LOG_LEVEL = 'warn';
+export const LOG_LEVELS = Object.freeze(['silent', 'error', 'warn', 'info', 'debug']);
+
+// On-device classification. Inference runs locally, but it still has to finish:
+// an unbounded await would keep the service worker alive indefinitely.
+export const AI_CLASSIFY_TIMEOUT_MS = 15_000;
+
+// Page titles and descriptions are attacker-controlled and go into the prompt.
+// Truncating bounds both the token cost and the injection surface.
+export const AI_MAX_TITLE_LENGTH = 120;
+export const AI_MAX_DESCRIPTION_LENGTH = 200;
+
+// chrome.storage.session values must be structured-cloneable, so a "no result"
+// outcome is stored as this sentinel rather than as undefined.
+export const AI_NO_MATCH = '__none__';
+
+/**
+ * Model availability, mirroring the Chrome Prompt API's own vocabulary.
+ * 'downloadable' means usable only after a multi-gigabyte download, which is
+ * never triggered implicitly — see AiClassifier.
+ */
+export const AI_STATUS = Object.freeze({
+  UNSUPPORTED: 'unsupported',
+  UNAVAILABLE: 'unavailable',
+  DOWNLOADABLE: 'downloadable',
+  DOWNLOADING: 'downloading',
+  AVAILABLE: 'available',
+});
+
+/**
+ * Focus score tuning.
+ *
+ * The score measures how *concentrated* attention was — deliberately not how
+ * "productive" it was. Judging categories as good or bad would bake one
+ * person's value judgement into everyone's dashboard; whether three hours of
+ * YouTube is well spent is not the extension's call to make.
+ */
+export const FOCUS = Object.freeze({
+  // Consecutive visits to one site closer together than this are one block.
+  // Bridges the gaps created by flushing a live session every few minutes.
+  BLOCK_GAP_MS: 5 * 60 * 1000,
+
+  // A block at least this long counts as sustained attention.
+  DEEP_BLOCK_MS: 15 * 60 * 1000,
+
+  // Switching this often is treated as maximum thrash — the penalty saturates.
+  MAX_SWITCHES_PER_HOUR: 30,
+
+  // Below this much tracked time the score is statistically meaningless, so it
+  // is reported as null rather than as a number nobody should read into.
+  MIN_SAMPLE_MS: 10 * 60 * 1000,
+
+  // Must sum to 1.
+  WEIGHTS: Object.freeze({
+    deepWork: 0.45,
+    lowSwitching: 0.35,
+    concentration: 0.20,
+  }),
+});
+
+// How many trailing days the periodic refresh re-derives. Two covers the common
+// failure: a day's final sessions are written after its aggregate was last built
+// (or after midnight), leaving that day permanently short in weekly/monthly views.
+export const AGGREGATE_REFRESH_DAYS = 2;
 
 // Message types
 export const MSG = {
@@ -44,6 +235,7 @@ export const MSG = {
   YOUTUBE_FULLSCREEN: 'YOUTUBE_FULLSCREEN',
   YOUTUBE_THEATER: 'YOUTUBE_THEATER',
   VISIBILITY_CHANGE: 'VISIBILITY_CHANGE',
+  MEDIA_STATE: 'MEDIA_STATE',
 
   // Background → Content Script
   REREQUEST_YT_META: 'REREQUEST_YT_META',
@@ -58,10 +250,8 @@ export const MSG = {
   GET_UNCATEGORIZED: 'GET_UNCATEGORIZED',
   CLEAR_HISTORY: 'CLEAR_HISTORY',
   RESET_EVERYTHING: 'RESET_EVERYTHING',
-
-  // Background → Popup
-  SESSION_UPDATED: 'SESSION_UPDATED',
-  ASK_CATEGORIZE: 'ASK_CATEGORIZE',
+  REPAIR_SESSIONS: 'REPAIR_SESSIONS',
+  SEED_CATEGORY: 'SEED_CATEGORY',
 };
 
 // Default categories
@@ -74,17 +264,12 @@ export const DEFAULT_CATEGORIES = [
     isBuiltIn: true,
     rules: [
       { type: 'domain', value: 'facebook.com' },
-      { type: 'domain', value: 'www.facebook.com' },
       { type: 'domain', value: 'twitter.com' },
       { type: 'domain', value: 'x.com' },
       { type: 'domain', value: 'instagram.com' },
-      { type: 'domain', value: 'www.instagram.com' },
       { type: 'domain', value: 'reddit.com' },
-      { type: 'domain', value: 'www.reddit.com' },
       { type: 'domain', value: 'linkedin.com' },
-      { type: 'domain', value: 'www.linkedin.com' },
       { type: 'domain', value: 'tiktok.com' },
-      { type: 'domain', value: 'www.tiktok.com' },
       { type: 'domain', value: 'threads.net' },
       { type: 'domain', value: 'bsky.app' },
       { type: 'domain', value: 'snapchat.com' },
@@ -98,17 +283,13 @@ export const DEFAULT_CATEGORIES = [
     isBuiltIn: true,
     rules: [
       { type: 'domain', value: 'youtube.com' },
-      { type: 'domain', value: 'www.youtube.com' },
       { type: 'domain', value: 'netflix.com' },
-      { type: 'domain', value: 'www.netflix.com' },
       { type: 'domain', value: 'twitch.tv' },
-      { type: 'domain', value: 'www.twitch.tv' },
       { type: 'domain', value: 'spotify.com' },
       { type: 'domain', value: 'open.spotify.com' },
       { type: 'domain', value: 'disneyplus.com' },
       { type: 'domain', value: 'primevideo.com' },
       { type: 'domain', value: 'hotstar.com' },
-      { type: 'domain', value: 'www.hotstar.com' },
       { type: 'domain', value: 'crunchyroll.com' },
       { type: 'domain', value: 'soundcloud.com' },
     ],
@@ -122,9 +303,7 @@ export const DEFAULT_CATEGORIES = [
     rules: [
       { type: 'domain_contains', value: 'news' },
       { type: 'domain', value: 'bbc.com' },
-      { type: 'domain', value: 'www.bbc.com' },
       { type: 'domain', value: 'cnn.com' },
-      { type: 'domain', value: 'www.cnn.com' },
       { type: 'domain', value: 'reuters.com' },
       { type: 'domain', value: 'nytimes.com' },
       { type: 'domain', value: 'theguardian.com' },
@@ -134,7 +313,6 @@ export const DEFAULT_CATEGORIES = [
       { type: 'domain', value: 'theverge.com' },
       { type: 'domain', value: 'arstechnica.com' },
       { type: 'domain', value: 'ndtv.com' },
-      { type: 'domain', value: 'www.ndtv.com' },
       { type: 'domain', value: 'timesofindia.indiatimes.com' },
     ],
   },
@@ -150,7 +328,6 @@ export const DEFAULT_CATEGORIES = [
       { type: 'domain', value: 'slides.google.com' },
       { type: 'domain', value: 'drive.google.com' },
       { type: 'domain', value: 'notion.so' },
-      { type: 'domain', value: 'www.notion.so' },
       { type: 'domain', value: 'trello.com' },
       { type: 'domain', value: 'asana.com' },
       { type: 'domain', value: 'slack.com' },
@@ -159,9 +336,7 @@ export const DEFAULT_CATEGORIES = [
       { type: 'domain', value: 'clickup.com' },
       { type: 'domain', value: 'monday.com' },
       { type: 'domain', value: 'figma.com' },
-      { type: 'domain', value: 'www.figma.com' },
       { type: 'domain', value: 'canva.com' },
-      { type: 'domain', value: 'www.canva.com' },
       { type: 'domain', value: 'calendar.google.com' },
       { type: 'domain', value: 'airtable.com' },
     ],
@@ -178,7 +353,6 @@ export const DEFAULT_CATEGORIES = [
       { type: 'domain', value: 'stackoverflow.com' },
       { type: 'domain', value: 'developer.mozilla.org' },
       { type: 'domain', value: 'npmjs.com' },
-      { type: 'domain', value: 'www.npmjs.com' },
       { type: 'domain', value: 'pypi.org' },
       { type: 'domain', value: 'codepen.io' },
       { type: 'domain', value: 'codesandbox.io' },
@@ -198,16 +372,11 @@ export const DEFAULT_CATEGORIES = [
     isBuiltIn: true,
     rules: [
       { type: 'domain', value: 'amazon.com' },
-      { type: 'domain', value: 'www.amazon.com' },
       { type: 'domain', value: 'amazon.in' },
-      { type: 'domain', value: 'www.amazon.in' },
       { type: 'domain', value: 'flipkart.com' },
-      { type: 'domain', value: 'www.flipkart.com' },
       { type: 'domain', value: 'ebay.com' },
-      { type: 'domain', value: 'www.ebay.com' },
       { type: 'domain', value: 'etsy.com' },
       { type: 'domain', value: 'myntra.com' },
-      { type: 'domain', value: 'www.myntra.com' },
       { type: 'domain_contains', value: 'shop' },
     ],
   },
@@ -219,9 +388,7 @@ export const DEFAULT_CATEGORIES = [
     isBuiltIn: true,
     rules: [
       { type: 'domain', value: 'coursera.org' },
-      { type: 'domain', value: 'www.coursera.org' },
       { type: 'domain', value: 'udemy.com' },
-      { type: 'domain', value: 'www.udemy.com' },
       { type: 'domain', value: 'khanacademy.org' },
       { type: 'domain', value: 'wikipedia.org' },
       { type: 'domain', value: 'en.wikipedia.org' },
@@ -230,7 +397,6 @@ export const DEFAULT_CATEGORIES = [
       { type: 'domain', value: 'skillshare.com' },
       { type: 'domain', value: 'freecodecamp.org' },
       { type: 'domain', value: 'w3schools.com' },
-      { type: 'domain', value: 'www.w3schools.com' },
       { type: 'domain', value: 'leetcode.com' },
       { type: 'domain_contains', value: 'learn' },
       { type: 'domain_contains', value: 'edu' },
@@ -244,9 +410,7 @@ export const DEFAULT_CATEGORIES = [
     isBuiltIn: true,
     rules: [
       { type: 'domain', value: 'google.com' },
-      { type: 'domain', value: 'www.google.com' },
       { type: 'domain', value: 'bing.com' },
-      { type: 'domain', value: 'www.bing.com' },
       { type: 'domain', value: 'duckduckgo.com' },
       { type: 'domain', value: 'search.yahoo.com' },
       { type: 'domain', value: 'perplexity.ai' },
@@ -300,6 +464,33 @@ export const YOUTUBE_CATEGORY_MAP = {
   'Nonprofits & Activism': 'news',
 };
 
+// Title keyword hints → YouTube's own category names.
+//
+// Used only when a video's real category can't be read from the page. Results
+// feed back through YOUTUBE_CATEGORY_MAP above, so this table never needs to
+// know about our internal category IDs — that mapping lives in exactly one place.
+export const YOUTUBE_TITLE_HINTS = {
+  'Education': [
+    'tutorial', 'course', 'learn', 'explained', 'how to', 'lecture', 'lesson',
+    'programming', 'python', 'javascript', 'coding', 'beginners', 'complete guide',
+    'crash course', 'masterclass', 'for beginners', 'step by step',
+    'full course', 'web development', 'data science', 'machine learning',
+  ],
+  'Science & Technology': [
+    'tech', 'review', 'unboxing', 'setup', 'software', 'hardware', ' ai ',
+    'gadget', 'benchmark',
+  ],
+  'Music': [
+    'official video', 'official audio', 'music video', 'lyrics', 'album', 'remix',
+  ],
+  'Gaming': [
+    'gameplay', 'walkthrough', 'playthrough', 'gaming', 'lets play',
+    'minecraft', 'fortnite', 'valorant',
+  ],
+  'News & Politics': ['politics', 'election', 'debate', 'breaking news'],
+  'Entertainment': ['funny', 'comedy', 'prank', 'challenge', 'reaction', 'vlog'],
+};
+
 // Keyword heuristics for categorization fallback
 export const KEYWORD_HINTS = {
   social_media: ['social', 'feed', 'profile', 'follow', 'tweet', 'post', 'share', 'friends'],
@@ -313,6 +504,24 @@ export const KEYWORD_HINTS = {
   email: ['inbox', 'email', 'message', 'chat', 'call', 'meeting'],
 };
 
+// Accepted ranges for numeric settings.
+//
+// Authoritative: the matching min/max attributes in options.html are a UI
+// affordance only. Values are re-validated here on save, because HTML
+// constraints are trivially bypassed and settings are also written by code.
+export const SETTINGS_LIMITS = Object.freeze({
+  idleThresholdSeconds: Object.freeze({
+    min: MIN_IDLE_THRESHOLD_SECONDS,
+    max: 3600,
+    fallback: DEFAULT_IDLE_THRESHOLD_SECONDS,
+  }),
+  retentionDays: Object.freeze({
+    min: 1,
+    max: 3650,
+    fallback: DEFAULT_RETENTION_DAYS,
+  }),
+});
+
 // Default settings
 export const DEFAULT_SETTINGS = {
   idleThresholdSeconds: DEFAULT_IDLE_THRESHOLD_SECONDS,
@@ -320,7 +529,16 @@ export const DEFAULT_SETTINGS = {
   excludedDomains: [],
   retentionDays: DEFAULT_RETENTION_DAYS,
   youtubeDeepTracking: true,
-  dashboardDefaultView: 'daily',
-  aiApiKey: '',
-  aiProvider: '',
+  accentColor: DEFAULT_ACCENT,
+  accentMode: ACCENT_MODES.FIXED,
+  accentSpanHours: DEFAULT_ACCENT_SPAN_HOURS,
+  // Off by default. Classification is on-device, but it is still inference over
+  // the user's browsing data and must be an explicit choice.
+  aiEnabled: false,
+  logLevel: LOG_LEVEL,
 };
+
+// Settings removed in the move to on-device-only classification. Actively
+// deleted on upgrade rather than left in place: aiApiKey held a third-party
+// credential in plaintext, and a dead feature must not leave one behind.
+export const REMOVED_SETTINGS_KEYS = Object.freeze(['aiApiKey', 'aiProvider']);

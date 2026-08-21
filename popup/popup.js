@@ -1,22 +1,25 @@
-import { MSG, DEFAULT_CATEGORIES } from '../shared/constants.js';
-import { formatDuration, formatDurationPrecise } from '../shared/utils.js';
+import { MSG } from '../shared/constants.js';
+import { formatDuration, formatDurationPrecise, faviconUrl, todayKey } from '../shared/utils.js';
+import { html, render, cssColor } from '../shared/html.js';
+import { createCategoryRegistry } from '../shared/category-registry.js';
+import { computeFocusScore } from '../shared/metrics.js';
+import { initTheme, refreshAccent, themeColor } from '../shared/theme.js';
+import { createLogger } from '../shared/logger.js';
+import * as storage from '../background/storage-manager.js';
 
-function escapeHtml(s) {
-  if (s === null || s === undefined) return '';
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+const log = createLogger('popup');
 
-// ─── DOM Elements ──────────────────────────────────────────────────
+/** Populated on load so custom categories render here, not just built-ins. */
+let categories = createCategoryRegistry();
+
+// ─── DOM ───────────────────────────────────────────────────────────
 
 const trackingToggle = document.getElementById('tracking-toggle');
 const currentDomain = document.getElementById('current-domain');
 const currentTime = document.getElementById('current-time');
 const totalTime = document.getElementById('total-time');
+const todayMeta = document.getElementById('today-meta');
+const focusScoreEl = document.getElementById('focus-score');
 const categoryChart = document.getElementById('category-chart');
 const domainList = document.getElementById('domain-list');
 const uncatNotice = document.getElementById('uncategorized-notice');
@@ -24,21 +27,29 @@ const uncatDomain = document.getElementById('uncat-domain');
 const categoryButtons = document.getElementById('category-buttons');
 const openDashboard = document.getElementById('open-dashboard');
 const openOptions = document.getElementById('open-options');
-const pulseDot = document.querySelector('.pulse-dot');
+const pulseDot = document.getElementById('pulse-dot');
 
-let currentSessionTimer = null;
+let sessionTimer = null;
 let sessionStartTime = 0;
-let sessionElapsed = 0;
+let sessionElapsedBase = 0;
 
 // ─── Init ──────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
+  await initTheme();
+
+  try {
+    categories = createCategoryRegistry(await storage.getCategories());
+  } catch (err) {
+    log.error('Could not load categories:', err);
+  }
+
   await loadStats();
   await loadUncategorized();
   startSessionTimer();
 });
 
-// ─── Load Today's Stats ────────────────────────────────────────────
+// ─── Today's stats ─────────────────────────────────────────────────
 
 async function loadStats() {
   try {
@@ -47,59 +58,78 @@ async function loadStats() {
 
     const { aggregate, currentSession } = response;
 
-    // Update total time
     if (aggregate) {
       let total = aggregate.totalTime || 0;
-      // Add current session's live time
-      if (currentSession && currentSession.isActive) {
+      if (currentSession?.isActive) {
         total += Date.now() - currentSession.startTime;
       }
       totalTime.textContent = formatDuration(total);
+      todayMeta.textContent = `${aggregate.sessionCount || 0} SESSIONS`;
 
-      // Update top domains
+      // In dynamic mode the accent tracks today's total, and this is the one
+      // place that already knows it — passing it avoids a second round trip.
+      await refreshAccent(document.documentElement, total);
+
       renderTopDomains(aggregate.domainBreakdown || {});
-
-      // Update category chart
       renderCategoryChart(aggregate.categoryBreakdown || {});
     }
 
-    // Update current session display
-    if (currentSession && currentSession.isActive) {
+    await renderFocusScore();
+
+    if (currentSession?.isActive) {
       currentDomain.textContent = currentSession.domain || 'Unknown';
       sessionStartTime = currentSession.startTime;
-      sessionElapsed = currentSession.duration || 0;
-      pulseDot.classList.remove('paused', 'disabled');
+      sessionElapsedBase = currentSession.duration || 0;
+      pulseDot.classList.remove('is-idle', 'is-off');
+    } else if (currentSession) {
+      currentDomain.textContent = `${currentSession.domain} · paused`;
+      sessionStartTime = 0;
+      currentTime.textContent = formatDurationPrecise(currentSession.duration || 0);
+      pulseDot.classList.add('is-idle');
     } else {
       currentDomain.textContent = 'Not tracking';
       currentTime.textContent = '00:00:00';
-      pulseDot.classList.add('paused');
+      pulseDot.classList.add('is-off');
     }
 
-    // Load tracking state
-    const settings = await chrome.storage.local.get('settings');
-    const trackingEnabled = settings.settings?.trackingEnabled ?? true;
-    trackingToggle.checked = trackingEnabled;
-    if (!trackingEnabled) {
-      pulseDot.classList.add('disabled');
-    }
+    const settings = await storage.getSettings();
+    trackingToggle.checked = settings.trackingEnabled;
+    if (!settings.trackingEnabled) pulseDot.classList.add('is-off');
   } catch (err) {
-    console.error('[Track Daily] Error loading stats:', err);
+    log.error('Error loading stats:', err);
   }
 }
 
-// ─── Real-time Session Timer ───────────────────────────────────────
+/** Today's focus score, shown in the middle of the category ring. */
+async function renderFocusScore() {
+  try {
+    const today = todayKey();
+    const sessions = await chrome.runtime.sendMessage({
+      type: MSG.GET_SESSIONS,
+      data: { startDate: today, endDate: today },
+    });
+    const { score } = computeFocusScore(sessions ?? []);
+    // null means too little data to judge — never render that as a zero.
+    focusScoreEl.textContent = score === null ? '--' : String(score);
+  } catch (err) {
+    log.warn('Could not compute focus score:', err?.message);
+  }
+}
+
+// ─── Live timer ────────────────────────────────────────────────────
 
 function startSessionTimer() {
-  if (currentSessionTimer) clearInterval(currentSessionTimer);
-  currentSessionTimer = setInterval(() => {
+  if (sessionTimer) clearInterval(sessionTimer);
+  sessionTimer = setInterval(() => {
     if (sessionStartTime > 0) {
-      const elapsed = sessionElapsed + (Date.now() - sessionStartTime);
-      currentTime.textContent = formatDurationPrecise(elapsed);
+      currentTime.textContent = formatDurationPrecise(
+        sessionElapsedBase + (Date.now() - sessionStartTime)
+      );
     }
   }, 1000);
 }
 
-// ─── Top Domains ───────────────────────────────────────────────────
+// ─── Top domains ───────────────────────────────────────────────────
 
 function renderTopDomains(domainBreakdown) {
   const entries = Object.entries(domainBreakdown)
@@ -107,127 +137,108 @@ function renderTopDomains(domainBreakdown) {
     .slice(0, 5);
 
   if (entries.length === 0) {
-    domainList.innerHTML = '<li class="empty-state">No data yet</li>';
+    render(domainList, html`<li class="hud-empty">NO DATA YET</li>`);
     return;
   }
 
   const maxTime = entries[0][1];
-  domainList.innerHTML = entries
-    .map(([domain, time]) => {
-      const barWidth = Math.max(5, (time / maxTime) * 100);
-      const safeDomain = escapeHtml(domain);
-      const encodedDomain = encodeURIComponent(domain);
-      return `
-        <li>
-          <div style="flex:1; min-width:0;">
-            <div class="domain-info">
-              <img class="domain-icon" src="https://www.google.com/s2/favicons?domain=${encodedDomain}&sz=32" alt="" onerror="this.style.display='none'">
-              <span class="domain-name">${safeDomain}</span>
-            </div>
-            <div class="domain-bar" style="width: ${barWidth}%"></div>
+  render(domainList, html`${entries.map(([domain, time]) => {
+    const barWidth = Math.max(4, (time / maxTime) * 100).toFixed(1);
+    return html`
+      <li>
+        <div style="flex:1; min-width:0;">
+          <div class="domain-info">
+            <img class="domain-icon" src="${faviconUrl(domain)}" alt=""
+                 onerror="this.style.visibility='hidden'">
+            <span class="domain-name">${domain}</span>
           </div>
-          <span class="domain-time">${formatDuration(time)}</span>
-        </li>
-      `;
-    })
-    .join('');
+          <div class="domain-bar" style="width:${barWidth}%"></div>
+        </div>
+        <span class="domain-time">${formatDuration(time)}</span>
+      </li>
+    `;
+  })}`);
 }
 
-// ─── Category Chart ────────────────────────────────────────────────
+// ─── Category ring ─────────────────────────────────────────────────
 
 function renderCategoryChart(categoryBreakdown) {
   const ctx = categoryChart.getContext('2d');
+  const size = categoryChart.width;
   const entries = Object.entries(categoryBreakdown).filter(([, v]) => v > 0);
 
+  ctx.clearRect(0, 0, size, size);
+
+  const centre = size / 2;
+  const outer = centre - 6;
+  const inner = outer - 9;
+
+  // Canvas cannot read CSS custom properties, so the theme colours are
+  // resolved here and passed in explicitly.
+  const trackColour = themeColor('--line', 'rgba(255,255,255,0.07)');
+
   if (entries.length === 0) {
-    // Draw empty state
-    ctx.clearRect(0, 0, 200, 200);
-    ctx.fillStyle = '#444';
-    ctx.font = '13px system-ui';
-    ctx.textAlign = 'center';
-    ctx.fillText('No data yet', 100, 105);
+    ring(ctx, centre, outer, inner, 0, Math.PI * 2, trackColour);
     return;
   }
 
   const total = entries.reduce((sum, [, v]) => sum + v, 0);
-  const categoryMap = {};
-  for (const cat of DEFAULT_CATEGORIES) {
-    categoryMap[cat.id] = cat;
-  }
+  let angle = -Math.PI / 2;
 
-  // Draw doughnut chart
-  ctx.clearRect(0, 0, 200, 200);
-  const centerX = 100, centerY = 100;
-  const outerRadius = 80, innerRadius = 50;
-  let startAngle = -Math.PI / 2;
+  // Faint full ring behind the segments so an almost-empty day still reads
+  // as a dial rather than a stray arc.
+  ring(ctx, centre, outer, inner, 0, Math.PI * 2, trackColour);
 
   for (const [categoryId, time] of entries) {
-    const cat = categoryMap[categoryId] || { color: '#9E9E9E' };
-    const sliceAngle = (time / total) * Math.PI * 2;
-
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, outerRadius, startAngle, startAngle + sliceAngle);
-    ctx.arc(centerX, centerY, innerRadius, startAngle + sliceAngle, startAngle, true);
-    ctx.closePath();
-    ctx.fillStyle = cat.color;
-    ctx.fill();
-
-    startAngle += sliceAngle;
+    const sweep = (time / total) * Math.PI * 2;
+    ring(ctx, centre, outer, inner, angle, angle + sweep, cssColor(categories.get(categoryId).color));
+    angle += sweep;
   }
-
-  // Center text
-  ctx.fillStyle = '#e0e0e0';
-  ctx.font = 'bold 16px system-ui';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(formatDuration(total), centerX, centerY - 6);
-  ctx.font = '11px system-ui';
-  ctx.fillStyle = '#888';
-  ctx.fillText('total', centerX, centerY + 12);
 }
 
-// ─── Uncategorized Domains ─────────────────────────────────────────
+function ring(ctx, centre, outer, inner, from, to, colour) {
+  ctx.beginPath();
+  ctx.arc(centre, centre, outer, from, to);
+  ctx.arc(centre, centre, inner, to, from, true);
+  ctx.closePath();
+  ctx.fillStyle = colour;
+  ctx.fill();
+}
+
+// ─── Uncategorized queue ───────────────────────────────────────────
 
 async function loadUncategorized() {
   try {
     const uncategorized = await chrome.runtime.sendMessage({ type: MSG.GET_UNCATEGORIZED });
     if (!uncategorized || uncategorized.length === 0) {
-      uncatNotice.style.display = 'none';
+      uncatNotice.hidden = true;
       return;
     }
 
-    // Show the first uncategorized domain
     const first = uncategorized[0];
     uncatDomain.textContent = first.domain;
-    uncatNotice.style.display = 'block';
+    uncatNotice.hidden = false;
 
-    // Build category buttons
-    const cats = DEFAULT_CATEGORIES.filter((c) => c.id !== 'uncategorized');
-    categoryButtons.innerHTML = cats
-      .map((c) => `<button class="cat-btn" data-id="${escapeHtml(c.id)}">${escapeHtml(c.icon)} ${escapeHtml(c.name)}</button>`)
-      .join('');
+    render(categoryButtons, html`${categories.assignable().map((c) =>
+      html`<button class="cat-btn" data-id="${c.id}">${c.icon} ${c.name}</button>`
+    )}`);
 
-    // Add click handlers
     categoryButtons.querySelectorAll('.cat-btn').forEach((btn) => {
       btn.addEventListener('click', async () => {
         await chrome.runtime.sendMessage({
           type: MSG.CATEGORIZE_DOMAIN,
-          data: {
-            domain: first.domain,
-            categoryId: btn.dataset.id,
-            title: first.title,
-          },
+          data: { domain: first.domain, categoryId: btn.dataset.id, title: first.title },
         });
-        await loadUncategorized(); // Refresh
-        await loadStats(); // Refresh stats
+        await loadUncategorized();
+        await loadStats();
       });
     });
   } catch (err) {
-    console.error('[Track Daily] Error loading uncategorized:', err);
+    log.error('Error loading uncategorized:', err);
   }
 }
 
-// ─── Event Handlers ────────────────────────────────────────────────
+// ─── Events ────────────────────────────────────────────────────────
 
 trackingToggle.addEventListener('change', async () => {
   await chrome.runtime.sendMessage({
@@ -236,9 +247,9 @@ trackingToggle.addEventListener('change', async () => {
   });
 
   if (trackingToggle.checked) {
-    pulseDot.classList.remove('disabled');
+    pulseDot.classList.remove('is-off');
   } else {
-    pulseDot.classList.add('disabled');
+    pulseDot.classList.add('is-off');
     currentDomain.textContent = 'Tracking paused';
     currentTime.textContent = '00:00:00';
     sessionStartTime = 0;
